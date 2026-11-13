@@ -1,0 +1,19 @@
+// One screen: the game's touch-screen menus drawn on the top screen by the game itself (single_screen in mh4u.ini).
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+struct RCtx;
+
+namespace Port::OneScreen {
+
+/// hooks.cpp's sMhMain::frame, before the game's frame. Returns a line for the log, or "".
+std::string Frame(RCtx* ctx, bool on);
+
+/// hooks.cpp's nLayout::objectConstants, after the game wrote the object's constants at `constants` (x, y, z, w, then
+/// the colour) for the layout pass of `screen` (0 the top screen, 7 the touch screen).
+void ObjectConstants(RCtx* ctx, std::uint32_t object, std::uint32_t draw, std::uint32_t constants,
+                     std::uint32_t screen);
+
+}  // namespace Port::OneScreen

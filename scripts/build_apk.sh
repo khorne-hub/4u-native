@@ -1,6 +1,8 @@
 #!/bin/sh
 # Builds the app's APK from this tree: libmain.so (app_native/ with the runtime in mh4n/), libadrenotools' hook
-# libraries and SDL3's library (scripts/build_sdl3.sh first), the code library id the app checks, then Gradle.
+# libraries and SDL3's library (scripts/build_sdl3.sh first), the code library id the app checks, the on-phone
+# builder's two launchers (libpyrun.so, libzigcc.so) and its tools (mh4n's tools/ and config/, zipped by
+# scripts/pack_builder_tools.py), then Gradle.
 #
 #   sh scripts/build_apk.sh
 #
@@ -8,7 +10,7 @@
 # keyAlias, keyPassword) and android/mh4u.keystore hold your own signing key; without them it builds a debug APK
 # (android/app/build/outputs/apk/debug/app-debug.apk) signed with your Android debug key. Either way it can't replace
 # an installed APK signed with another key: Android asks to uninstall it first, and that deletes its saves (export
-# them first: gear, Menu Options, Export save).
+# them first: gear, System, Your game, Export save).
 #
 # Needs the Android SDK (platform 35) and NDK 27.0.12077973, CMake 3.25 or newer, Ninja, Python 3.10 or newer and a
 # JDK 17 (JAVA_HOME; Android Studio's own, jbr, works). See scripts/android_env.sh.
@@ -27,8 +29,9 @@ MAP="-ffile-prefix-map=$R/= -ffile-prefix-map=$N/=ndk/"
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMH4N_DIR="$R/mh4n" -DSDL3_DIR="$(native_path "$SDL3_DIR")/lib/cmake/SDL3" \
     -DCMAKE_C_FLAGS="$MAP" -DCMAKE_CXX_FLAGS="$MAP" -DCMAKE_ASM_FLAGS="$MAP"
 HOOKS="hook_impl main_hook file_redirect_hook gsl_alloc_hook"
+TOOLS="pyrun zigcc"   # (the on-phone builder's launchers: programs named lib*.so, so Android lets the app run them)
 # shellcheck disable=SC2086
-"$CMAKE" --build "$(native_path "$BUILD")" --target main $HOOKS --parallel
+"$CMAKE" --build "$(native_path "$BUILD")" --target main $HOOKS $TOOLS --parallel
 
 LIBS="$ROOT/android/app/src/main/jniLibs/arm64-v8a"
 mkdir -p "$LIBS"
@@ -36,12 +39,17 @@ mkdir -p "$LIBS"
 for H in $HOOKS; do
     "$STRIP" --strip-unneeded -o "$(native_path "$LIBS/lib$H.so")" "$(native_path "$BUILD/adrenotools/src/hook/lib$H.so")"
 done
+for T in $TOOLS; do
+    "$STRIP" --strip-unneeded -o "$(native_path "$LIBS/lib$T.so")" "$(native_path "$BUILD/lib$T.so")"
+done
 "$STRIP" --strip-unneeded -o "$(native_path "$LIBS/libSDL3.so")" "$(native_path "$SDL3_DIR/lib/libSDL3.so")"
 
 # the id of the code library this build runs with: the app refuses a library made with other tools
 mkdir -p "$ROOT/android/app/src/main/assets"
 "$PYTHON" "$R/mh4n/tools/build_game.py" --print-id > "$ROOT/android/app/src/main/assets/code_library_id.txt"
 echo "code library id: $(cat "$ROOT/android/app/src/main/assets/code_library_id.txt")"
+# the on-phone builder's tools, from this tree's mh4n, checked to make libraries with that same id
+"$PYTHON" "$R/scripts/pack_builder_tools.py" "$R/mh4n"
 
 cd "$ROOT/android"
 ANDROID_HOME=$(native_path "$SDK"); export ANDROID_HOME   # (Gradle's SDK, without a local.properties)

@@ -7,8 +7,10 @@
 // Copyright 2014-2026 Citra Emulator Project / Azahar Emulator Project (ncch.cpp)
 #include "code_patch.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdio>
+#include <initializer_list>
 #include <fstream>
 #include <iterator>
 
@@ -138,6 +140,97 @@ std::optional<std::vector<u8>> ModFolder::ExheaderOverride() const {
     }
     data.resize(kExheaderSize);
     return data;
+}
+
+std::optional<std::vector<u8>> ExheaderOverrideOf(const std::vector<std::string>& folders, std::string* which) {
+    for (std::size_t i = folders.size(); i-- > 0;) {
+        if (auto exheader = ModFolder(folders[i]).ExheaderOverride()) {
+            if (which) *which = folders[i];
+            return exheader;
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<std::pair<u32, u32>> IpsRanges(const std::vector<u8>& patch) {
+    std::vector<std::pair<u32, u32>> out;
+    static constexpr u8 kMagic[5] = {'P', 'A', 'T', 'C', 'H'};
+    if (patch.size() < 8 || !std::equal(std::begin(kMagic), std::end(kMagic), patch.begin())) return out;
+    const auto be = [&](std::size_t at, int n) {
+        u32 v = 0;
+        for (int i = 0; i < n; ++i) v = v << 8 | (at + i < patch.size() ? patch[at + i] : 0);
+        return v;
+    };
+    std::size_t cursor = 5;
+    const std::size_t end = patch.size() - 3;
+    while (cursor < end && !(patch[cursor] == 'E' && patch[cursor + 1] == 'O' && patch[cursor + 2] == 'F')) {
+        const u32 offset = be(cursor, 3), length = be(cursor + 3, 2);
+        if (length == 0) {
+            out.emplace_back(offset, offset + be(cursor + 5, 2));
+            cursor += 8;
+        } else {
+            out.emplace_back(offset, offset + length);
+            cursor += 5 + length;
+        }
+    }
+    return out;
+}
+
+std::vector<CodeConflict> CodeConflicts(const std::vector<std::string>& folders) {
+    using Kind = CodeConflict::Kind;
+    std::vector<CodeConflict> out;
+    const auto has_any = [](const std::string& folder, std::initializer_list<const char*> names) -> std::string {
+        for (const char* rel : names) {
+            if (Exists(Join(folder, rel))) return rel;
+        }
+        return {};
+    };
+    std::vector<std::size_t> replacing;
+    for (std::size_t i = 0; i < folders.size(); ++i) {
+        if (!has_any(folders[i], {"exefs/code.bin", "code.bin"}).empty()) replacing.push_back(i);
+    }
+    for (std::size_t k = 1; k < replacing.size(); ++k) out.push_back({Kind::Replaced, replacing[k - 1], replacing[k]});
+    const bool replaced = !replacing.empty();
+    const std::size_t last = replaced ? replacing.back() : 0;
+    std::vector<std::pair<std::size_t, std::string>> patches;  // folder, its first patch
+    for (std::size_t i = 0; i < folders.size(); ++i) {
+        const std::string patch = has_any(folders[i], {"exefs/code.ips", "exefs/code.bps", "code.ips", "code.bps"});
+        if (patch.empty()) continue;
+        patches.emplace_back(i, patch);
+        if (replaced && i != last) out.push_back({Kind::PatchOnReplacement, i, last});
+    }
+    for (std::size_t i = folders.size(); i-- > 0;) {
+        if (Exists(Join(folders[i], "exheader.bin"))) {
+            if (replaced && i != last) out.push_back({Kind::Exheader, i, last});
+            break;
+        }
+    }
+    std::vector<std::pair<std::size_t, std::vector<std::pair<u32, u32>>>> seen;  // (folder, ranges; empty for a BPS)
+    std::vector<bool> is_bps;
+    for (const auto& [i, rel] : patches) {
+        const bool bps = rel.size() >= 4 && rel.compare(rel.size() - 4, 4, ".bps") == 0;
+        if (bps) {
+            if (!seen.empty()) out.push_back({Kind::Bps, i, seen.back().first});
+            seen.push_back({i, {}});
+            is_bps.push_back(true);
+            continue;
+        }
+        std::vector<u8> data;
+        bool opened = false;
+        ReadWhole(Join(folders[i], rel), &data, &opened);
+        std::vector<std::pair<u32, u32>> ranges = IpsRanges(data);
+        for (std::size_t k = 0; k < seen.size(); ++k) {
+            if (is_bps[k]) continue;
+            bool overlap = false;
+            for (const auto& [s, e] : ranges) {
+                for (const auto& [os, oe] : seen[k].second) overlap = overlap || (s < oe && os < e);
+            }
+            if (overlap) out.push_back({Kind::Overlap, i, seen[k].first});
+        }
+        seen.push_back({i, std::move(ranges)});
+        is_bps.push_back(false);
+    }
+    return out;
 }
 
 Outcome ApplyFolders(const std::vector<std::string>& folders, std::vector<u8>& code, u32 bss_pages) {

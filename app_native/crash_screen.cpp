@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <android/log.h>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <jni.h>
 #include <signal.h>
 #include <time.h>
@@ -92,13 +93,35 @@ void PutAddress(const char* what, uintptr_t pc) {
 struct sigaction g_previous[32];
 constexpr int kSignals[] = {SIGSEGV, SIGBUS, SIGABRT, SIGILL, SIGFPE, SIGTRAP};
 
+// The thread's name (/proc/self/task/<tid>/comm: mh4n-render, mh4n-pipeline, mh4u-game, a driver's or a library's own),
+// async-signal-safe; "?" when it can't be read
+void ThreadName(int tid, char* out, size_t size) {
+    snprintf(out, size, "?");
+    char path[64];
+    snprintf(path, sizeof path, "/proc/self/task/%d/comm", tid);
+    const int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    const ssize_t n = read(fd, out, size - 1);
+    close(fd);
+    if (n <= 0) {
+        snprintf(out, size, "?");
+        return;
+    }
+    out[n] = 0;
+    if (char* end = strchr(out, '\n')) *end = 0;
+}
+
 // A crash of the host's own (the runtime's handler passes on the faults outside the guest's memory)
 void OnSignal(int sig, siginfo_t* info, void* context) {
     if (g_crashing.exchange(1) == 0) {
-        char line[256];
-        snprintf(line, sizeof line, "\n*** MH4U: the game stopped: %s (code %d, address %016lx) on thread %d\n", SignalName(sig),
+        // (the thread's name says whose work it was: a SIGABRT of a Galaxy S23 FE's Xclipse 920 inside the driver's allocator
+        // named only a thread number, the renderer's or a pipeline worker's or the app's GL library's)
+        char line[320], name[32];
+        const int tid = static_cast<int>(gettid());
+        ThreadName(tid, name, sizeof name);
+        snprintf(line, sizeof line, "\n*** MH4U: the game stopped: %s (code %d, address %016lx) on thread %d (%s)\n", SignalName(sig),
                  info ? info->si_code : 0, info ? static_cast<unsigned long>(reinterpret_cast<uintptr_t>(info->si_addr)) : 0ul,
-                 static_cast<int>(gettid()));
+                 tid, name);
         Put(line);
 #if defined(__aarch64__)
         if (context != nullptr) {
@@ -135,7 +158,8 @@ void Watch() {
     g_shown.store(true);
 }
 
-// ---- a test-only trigger: MH4U_TEST_CRASH=guest|host|abort[:seconds] (launch.txt's env=), after 20 s by default
+// ---- a test-only trigger: MH4U_TEST_CRASH=guest|host|abort|devicelost|doublefree[:seconds] (launch.txt's env=), after
+// 20 s by default (doublefree: the allocator's own abort, with its reason in the system log)
 void TestTrigger(mh4n::Runtime& rt) {
     const char* what = std::getenv("MH4U_TEST_CRASH");
     if (what == nullptr || *what == 0) return;
@@ -157,6 +181,12 @@ void TestTrigger(mh4n::Runtime& rt) {
             *reinterpret_cast<volatile mh4n::u32*>(guest + 0x100000010ull) = 0xDEAD;
         } else if (kind == "abort") {
             std::abort();
+        } else if (kind == "devicelost") {
+            crash_screen_device_lost("MH4U_TEST_CRASH, a test");
+        } else if (kind == "doublefree") {
+            void* volatile block = std::malloc(64);
+            std::free(block);
+            std::free(block);
         } else {
             *reinterpret_cast<volatile int*>(static_cast<uintptr_t>(0x8)) = 1;
         }
@@ -165,6 +195,17 @@ void TestTrigger(mh4n::Runtime& rt) {
 MH4N_REGISTER(mh4n::BootStep, "zz.android.crash_test", mh4n::BootStep{mh4n::Phase::Started, TestTrigger});
 
 }  // namespace
+
+void crash_screen_device_lost(const char* where) {
+    if (g_crashing.exchange(1) != 0) return;
+    char line[512];
+    snprintf(line, sizeof line, "\n*** MH4U: the game stopped: the GPU stopped answering (Vulkan device lost: %s). The error "
+                                "screen opens.\n", where);
+    Put(line);
+    __android_log_print(ANDROID_LOG_ERROR, "MH4U", "the game stopped: the GPU's device is lost (%s)", where);
+    NotifyAndWait(4);
+    _exit(1);
+}
 
 void crash_screen_install() {
     auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());

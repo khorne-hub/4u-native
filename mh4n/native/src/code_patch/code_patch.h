@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mh4n/types.h"
@@ -65,6 +66,27 @@ public:
 private:
     std::string path_;
 };
+
+// Several mods folders at once, in load order: the exheader.bin of the last folder that has one (as the code
+// replacement: a later mod wins), or nothing. `which` (if given) gets that folder.
+std::optional<std::vector<u8>> ExheaderOverrideOf(const std::vector<std::string>& folders, std::string* which = nullptr);
+
+// Code mods that are on and don't go together (the tools' code_mods.code_conflicts: the same rules). `a` and `b` are
+// indexes into the folders given, in load order. The replacement is applied first and every patch after it, so:
+//   Replaced            two folders replace the code: only b's (the later one's) runs
+//   PatchOnReplacement  a's patch was made for the game's code but lands on b's replacement (Heavenfall's code.bin
+//                       with jM5557's code.ips): it breaks b's code
+//   Exheader            a's exheader.bin goes with a's own code, but b's replacement is the code that runs
+//   Overlap             a's and b's IPS patches write some of the same bytes: the later one wins there
+//   Bps                 a's BPS patch checks the code it was made for, and b's patch changed it before
+struct CodeConflict {
+    enum class Kind { Replaced, PatchOnReplacement, Exheader, Overlap, Bps };
+    Kind kind;
+    std::size_t a, b;
+};
+std::vector<CodeConflict> CodeConflicts(const std::vector<std::string>& folders);
+// The bytes an IPS patch writes, as [start, end) ranges (records and runs); empty for one that isn't an IPS.
+std::vector<std::pair<u32, u32>> IpsRanges(const std::vector<u8>& patch);
 
 // Several mods folders at once (the port's mod list, mods/mod_list.h), in load order: the code replacement
 // of the last folder that has one, then the bss pages, then each folder's first patch in turn. Azahar has

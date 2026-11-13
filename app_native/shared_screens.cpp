@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -688,6 +689,19 @@ bool shared_screens_init(SDL_Renderer* renderer) {
 
 bool shared_screens_available() {
     return g_available;
+}
+
+// (perf_hint.c, any thread: the process's map entries kept growing) the screens as pixels from the renderer's next VBlank on,
+// and the player told why the frame rate drops (settings_panel.cpp valve_notice, on the app's thread)
+std::atomic<bool> g_valve_notice{false};
+extern "C" void shared_screens_stop_sharing(void) {
+    if (!g_available || mh4n::present::SharedPicturesRefused()) return;
+    mh4n::present::SetSharedPicturesRefused(true);
+    g_valve_notice.store(true);
+}
+
+bool shared_screens_valve_notice_take() {
+    return g_valve_notice.exchange(false);
 }
 
 namespace {

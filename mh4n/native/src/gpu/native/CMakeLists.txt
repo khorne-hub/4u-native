@@ -16,6 +16,7 @@ mh4n_module(
     SOURCES
         compose.cpp
         default_provider.cpp
+        hd_textures.cpp
         native_gpu.cpp
         pipeline_builder.cpp
         process_memory.cpp
@@ -35,6 +36,7 @@ mh4n_module(
         mh4n_gpu_shader
         mh4n_gpu_texture
         mh4n_gpu_vertex
+        mh4n_hdpack
 )
 # The headers are included as "gpu/native/<name>.h".
 target_include_directories(mh4n_gpu_native PUBLIC "${MH4N_SRC_DIR}")

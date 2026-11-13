@@ -62,6 +62,28 @@ final class SaveFolder {
         return new File(sdmc(root), "extdata/00000000/" + (t.equals("00126100") ? "00001261" : "00001263"));
     }
 
+    /**
+     * The game the app runs, as its save's title folder is named (USA 00126300, Europe 00126100): the program id of the
+     * game folder's exheader.bin (an update's counts as the game's), else the one with a save in the save folder, else
+     * the USA one. A save goes there whatever region its own place names (an import checks that first).
+     */
+    static String gameTitle(Context c) {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(new File(c.getFilesDir(), "game/exheader.bin"))) {
+            byte[] e = new byte[0x208];
+            int n = 0;
+            for (int k; n < e.length && (k = in.read(e, n, e.length - n)) > 0; ) n += k;
+            if (n == e.length) {
+                long id = 0;
+                for (int i = 7; i >= 0; i--) id = (id << 8) | (e[0x200 + i] & 0xff);
+                String t = String.format(Locale.ROOT, "%08x", id & 0xffffffffL);
+                if (((id >>> 32) & ~0xEL) == 0x00040000L && Arrays.asList(TITLES).contains(t)) return t;
+            }
+        } catch (IOException ignored) {
+        }
+        for (String t : TITLES) if (new File(dataDir(active(c), t), "system").isFile()) return t;
+        return TITLES[0];
+    }
+
     static File chosen(Context c) {
         String p = AppHome.read(file(c, "save_folder.txt"));
         return p.isEmpty() ? null : new File(p);

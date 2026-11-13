@@ -158,6 +158,10 @@ void ui_set_bottom_default(bool shown) {
     touch_set_bottom_default(shown);
 }
 
+void ui_set_one_screen(bool on) {
+    touch_set_one_screen(on);
+}
+
 void ui_toggle_bottom() {
     touch_toggle_bottom();
 }

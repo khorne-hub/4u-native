@@ -101,4 +101,9 @@ private:
 rhi::Result<void> UploadRgba8(rhi::Recorder& rec, rhi::Ring& staging, rhi::Image& image, u32 mip, u32 layer, u32 width,
                               u32 height, std::span<const u8> rgba);
 
+// The same for the decoder's rows [first, first + count) of a width x height image only (`rgba` is the whole image): an
+// image bigger than the staging ring goes up in bands (an HD pack's texture, gpu/native/hd_textures.h). The same flip.
+rhi::Result<void> UploadRgba8Rows(rhi::Recorder& rec, rhi::Ring& staging, rhi::Image& image, u32 mip, u32 layer, u32 width,
+                                  u32 height, u32 first, u32 count, std::span<const u8> rgba);
+
 }  // namespace mh4n::gpu::fragment::sampling

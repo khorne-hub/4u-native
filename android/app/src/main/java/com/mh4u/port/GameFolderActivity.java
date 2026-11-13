@@ -50,14 +50,16 @@ public class GameFolderActivity extends Activity {
     static final String EXTRA_CHANGE = "change";
     static final String LIBRARY = "libmh4u_code_native.so";
     static final String ID = "libmh4u_code_native.id";  // (beside it: which version of the tools made it)
-    private static final int PICK = 1, READ = 2;
+    private static final int PICK = 1, READ = 2, BUILD = 3;
     private static final int WINE = Color.rgb(38, 18, 14), PANEL = Color.rgb(26, 12, 9), CREAM = Color.rgb(240, 228, 200);
     private static final int GOLD = Color.rgb(226, 182, 92), BRONZE = Color.rgb(62, 38, 22), EDGE = Color.rgb(196, 150, 70);
     private static final int ALERT = Color.rgb(255, 150, 120);
 
     private boolean es, change, waitingAccess;
     private TextView status;
-    private Button pick;
+    private Button pick, buildHere;
+    private File buildFolder;  // (a folder with the game and its update but no usable library: BuilderActivity can make it)
+    private long builtSeen;  // (the build whose library was looked at already: BuilderService.Job.started)
     private Dump dump;
 
     private File home() { return AppHome.home(this); }
@@ -98,8 +100,10 @@ public class GameFolderActivity extends Activity {
      * Which code library this version of the app runs with: the id mh4n's tools/build_game.py gives the libraries it makes
      * (scripts/build_app.sh puts it in the APK as code_library_id.txt). "" in an APK built without it: no check.
      */
-    private String wantedId() {
-        try (java.io.InputStream in = getAssets().open("code_library_id.txt")) {
+    private String wantedId() { return wantedId(this); }
+
+    static String wantedId(android.content.Context c) {
+        try (java.io.InputStream in = c.getAssets().open("code_library_id.txt")) {
             byte[] b = new byte[64];
             int n = in.read(b);
             return n > 0 ? new String(b, 0, n, StandardCharsets.UTF_8).trim() : "";
@@ -123,13 +127,84 @@ public class GameFolderActivity extends Activity {
     }
 
     /**
+     * The id the library carries inside itself (mh4n tools/game_version.py: the exported rc_library_id, the same as the .id
+     * file's), read from its ELF symbol table without loading it; "" for a library made before the tools wrote it.
+     */
+    static String idInside(File library) {
+        try (RandomAccessFile f = new RandomAccessFile(library, "r")) {
+            byte[] h = new byte[64];
+            f.readFully(h);
+            if (h[0] != 0x7F || h[1] != 'E' || h[2] != 'L' || h[3] != 'F' || h[4] != 2 || h[5] != 1) return "";
+            long shoff = le(h, 0x28, 8);
+            int shentsize = (int) le(h, 0x3A, 2), shnum = (int) le(h, 0x3C, 2);
+            if (shoff <= 0 || shentsize < 0x40 || shnum <= 0 || shnum > 4096) return "";
+            byte[] sh = new byte[shentsize * shnum];
+            f.seek(shoff);
+            f.readFully(sh);
+            for (int i = 0; i < shnum; i++) {
+                int at = i * shentsize;
+                if (le(sh, at + 4, 4) != 11) continue;  // SHT_DYNSYM
+                long symOff = le(sh, at + 0x18, 8), symSize = le(sh, at + 0x20, 8);
+                int link = (int) le(sh, at + 0x28, 4);
+                if (link >= shnum || symSize > (8 << 20)) return "";
+                int ls = link * shentsize;
+                long strOff = le(sh, ls + 0x18, 8), strSize = le(sh, ls + 0x20, 8);
+                if (strSize > (8 << 20)) return "";
+                byte[] syms = new byte[(int) symSize], strs = new byte[(int) strSize];
+                f.seek(symOff);
+                f.readFully(syms);
+                f.seek(strOff);
+                f.readFully(strs);
+                byte[] want = "rc_library_id".getBytes(StandardCharsets.US_ASCII);
+                for (int k = 0; k + 24 <= syms.length; k += 24) {
+                    int name = (int) le(syms, k, 4), shndx = (int) le(syms, k + 6, 2);
+                    if (name <= 0 || name + want.length >= strs.length || strs[name + want.length] != 0) continue;
+                    boolean same = true;
+                    for (int c = 0; c < want.length && same; c++) same = strs[name + c] == want[c];
+                    if (!same || shndx <= 0 || shndx >= shnum) continue;
+                    int ss = shndx * shentsize;
+                    long value = le(syms, k + 8, 8), secAddr = le(sh, ss + 0x10, 8), secOff = le(sh, ss + 0x18, 8);
+                    byte[] id = new byte[64];
+                    f.seek(secOff + (value - secAddr));
+                    int n = f.read(id);
+                    int len = 0;
+                    while (len < n && id[len] != 0) len++;
+                    return new String(id, 0, len, StandardCharsets.US_ASCII).trim();
+                }
+                return "";
+            }
+        } catch (Exception e) {
+            android.util.Log.w("MH4U", "code library id: " + e);
+        }
+        return "";
+    }
+
+    private static long le(byte[] b, int at, int n) {
+        long v = 0;
+        for (int i = n - 1; i >= 0; i--) v = v << 8 | (b[at + i] & 0xFFL);
+        return v;
+    }
+
+    /**
      * A library made with another version of the tools (another translator, its runtime or its tables): it would crash the
      * game, so it is found here, as MHGU's gamelib_id. Why, or null when it fits (or the APK has no id to compare with).
+     * The id inside the library wins over the .id file beside it, and the two must agree: a .so and an .id copied from
+     * two different builds are found here, before the game starts.
      */
     private String libraryVersionProblem(File library) {
         String want = wantedId();
         if (want.isEmpty() || library == null) return null;
-        String have = idBeside(library);
+        String beside = idBeside(library), inside = idInside(library);
+        if (!inside.isEmpty() && !beside.isEmpty() && !inside.equals(beside)) {
+            android.util.Log.w("MH4U", "code library " + library + ": id '" + inside + "' inside, '" + beside + "' in its .id file");
+            return es ? "La " + LIBRARY + " y el " + ID + " que tiene al lado son de armados distintos (copiados de dos lugares). "
+                        + "Copia juntos los dos archivos de un mismo armado, hechos con la herramienta de esta versión, y no "
+                        + "uses una librería que hizo otra persona."
+                      : "The " + LIBRARY + " and the " + ID + " beside it come from different builds (copied from two places). "
+                        + "Copy both files of the same build together, made with this version's tool, and don't use a "
+                        + "library someone else made.";
+        }
+        String have = inside.isEmpty() ? beside : inside;
         if (want.equals(have)) return null;
         android.util.Log.w("MH4U", "code library " + library + ": id '" + have + "', this app wants '" + want + "'");
         return have.isEmpty()
@@ -176,28 +251,43 @@ public class GameFolderActivity extends Activity {
         android.view.View plain = new android.view.View(this);
         plain.setBackgroundColor(WINE);
         setContentView(plain);
+        // (the files' check and the mods' copy from the game folder too: a big mod there could hold the screen for long)
         new Thread(() -> {
             AppHome.ensure(this);
+            final boolean right = startReady();
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
                 Notices.checkInBackground(this);
-                look();
+                if (right) proceed();
+                else look();
             });
         }, "app-home").start();
     }
 
-    /** The files of the game, once the app's folder is known: on to the game when they are right, else this screen. */
+    /**
+     * The game's files are right (the folder not being changed, nothing rejected): the game folder's mods copied in and
+     * launch.txt written, for the game to start. False when this screen is needed (look). Files only: off the UI thread.
+     */
+    private boolean startReady() {
+        File chosen = saved();
+        if (change || rejectedFile().exists() || !hasAccess() || !ready(chosen)) return false;
+        File library = contents(chosen)[2];
+        if (libraryVersionProblem(library) != null) return false;
+        syncMods(chosen);
+        writeLaunch(chosen, library);
+        return true;
+    }
+
+    /** The files of the game, once the app's folder is known and startReady said they are not right: this screen. */
     private void look() {
         boolean rejected = rejectedFile().exists();
         File chosen = saved();
-        if (!change && !rejected && hasAccess() && ready(chosen) && libraryVersionProblem(contents(chosen)[2]) == null) {
-            syncMods(chosen);
-            writeLaunch(chosen, contents(chosen)[2]);
-            proceed();
-            return;
-        }
         build();
         if ((rejected || (!change && hasAccess() && ready(chosen))) && chosen != null) {  // (also a library of another version: verify says so)
+            verify(chosen);
+        } else if (chosen != null && !change && hasAccess() && holdsGame(chosen)) {
+            // (the game and its update are still there: what is missing is the library, or Dump's copy of the update;
+            // verify says which, and offers to build the library on the phone)
             verify(chosen);
         } else if (chosen != null && !change) {
             status.setTextColor(ALERT);
@@ -240,11 +330,11 @@ public class GameFolderActivity extends Activity {
                     es ? "Otra app (un administrador de archivos, por ejemplo con Shizuku) creó la carpeta del juego, " + moved
                          + ", y Android no deja que el juego escriba en ella. Así que el juego guarda sus ajustes, su registro y "
                          + "tu partida en su carpeta privada, y copió ahí sus propios archivos; lo demás que haya en esa carpeta "
-                         + "queda donde está. Para llevar tu partida a otro lado usa Ajustes, Exportar partida o Carpeta de partidas."
+                         + "queda donde está. Para llevar tu partida a otro lado usa Ajustes, Sistema, Tu partida: Exportar partida o Carpeta de partidas."
                        : "Another app (a file manager, for example through Shizuku) made the game's folder, " + moved + ", and "
                          + "Android won't let the game write in it. So the game keeps its settings, its log and your save in its "
                          + "private folder, and copied its own files there; anything else in that folder stays where it is. To "
-                         + "take your save elsewhere, use Settings, Export save or Save folder.",
+                         + "take your save elsewhere, use Settings, System, Your game: Export save or Save folder.",
                     new Look.Choice(es ? "Continuar" : "Continue", true, this::proceed));
             return;
         }
@@ -344,11 +434,11 @@ public class GameFolderActivity extends Activity {
         right.addView(text(es ? "QUÉ TIENE QUE SER CADA UNO" : "WHAT EACH ONE MUST BE", 13, GOLD, true));
         TextView notes = text(es
                 ? "• El juego y la actualización 1.3.0, de América, descifrados, de tu propia copia. Cualquier nombre.\n"
-                  + "• " + LIBRARY + ": se crea una sola vez en una PC con la herramienta de la guía.\n"
+                  + "• " + LIBRARY + ": se crea una sola vez, en este teléfono (Crear en este teléfono) o en una PC con la herramienta de la guía.\n"
                   + "• mods: opcional, por ejemplo el mod de una sola pantalla.\n"
                   + "• Todo junto en la misma carpeta, unos 4 GB. Elige esa carpeta."
                 : "• The game and its 1.3.0 update, USA, decrypted, from your own copy. Any names.\n"
-                  + "• " + LIBRARY + ": made once on a PC with the guide's tool.\n"
+                  + "• " + LIBRARY + ": made once, on this phone (Build on this phone) or on a PC with the guide's tool.\n"
                   + "• mods: optional, for example the single-screen mod.\n"
                   + "• All in the same folder, about 4 GB. Choose that folder.", 14, CREAM, false);
         notes.setPadding(0, dp(6), 0, 0);
@@ -376,6 +466,14 @@ public class GameFolderActivity extends Activity {
         LinearLayout.LayoutParams size = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(46));
         size.setMargins(dp(8), 0, dp(8), 0);
         row.addView(pick, size);
+        buildHere = button(es ? "Crear en este teléfono" : "Build on this phone", true);
+        buildHere.setOnClickListener(v -> {
+            if (buildFolder != null)
+                startActivityForResult(new Intent(this, BuilderActivity.class).putExtra(BuilderActivity.EXTRA_FOLDER,
+                        buildFolder.getAbsolutePath()), BUILD);
+        });
+        buildHere.setVisibility(android.view.View.GONE);
+        row.addView(buildHere, new LinearLayout.LayoutParams(size));
         Button leave = button(change ? (es ? "Cancelar" : "Cancel") : (es ? "Salir" : "Exit"), false);
         leave.setOnClickListener(v -> finish());
         LinearLayout.LayoutParams size2 = new LinearLayout.LayoutParams(dp(120), dp(46));
@@ -425,6 +523,12 @@ public class GameFolderActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshButton();
+        // (the library was built while this screen waited, the builder reached from its notification: look again)
+        BuilderService.Job j = BuilderService.job;
+        if (buildFolder != null && j.status.equals("done") && j.started != builtSeen && buildFolder.getAbsolutePath().equals(j.folder)) {
+            builtSeen = j.started;
+            verify(buildFolder);
+        }
         if (waitingAccess && hasAccess()) {
             waitingAccess = false;
             status.setText("");
@@ -472,6 +576,11 @@ public class GameFolderActivity extends Activity {
     @Override
     protected void onActivityResult(int code, int result, Intent data) {
         super.onActivityResult(code, result, data);
+        if (code == BUILD) {  // (back from BuilderActivity: a library made, or not; the folder is looked at again)
+            builtSeen = BuilderService.job.started;
+            if (buildFolder != null) verify(buildFolder);
+            return;
+        }
         if (code != PICK || result != RESULT_OK || data == null || data.getData() == null) return;
         File dir = FolderBrowser.pathOf(data.getData());
         if (dir == null) {
@@ -501,13 +610,15 @@ public class GameFolderActivity extends Activity {
                 wrong = es ? "Falta la actualización 1.3.0 (.cia, descifrada), al lado del juego."
                            : "The 1.3.0 update (.cia, decrypted) is missing, beside the game.";
             else if (c[2] == null)
-                wrong = es ? "Falta " + LIBRARY + " en esa carpeta. Créalo en una PC con la herramienta de la guía."
-                           : LIBRARY + " is missing from that folder. Make it on a PC with the guide's tool.";
+                wrong = es ? "Falta " + LIBRARY + " en esa carpeta. Créalo en este teléfono (Crear en este teléfono) o en una PC con la herramienta de la guía."
+                           : LIBRARY + " is missing from that folder. Make it on this phone (Build on this phone) or on a PC with the guide's tool.";
             else if (!looksLikeLibrary(c[2]))
-                wrong = es ? LIBRARY + " no es una librería para Android (arm64). Créalo de nuevo con la herramienta de la guía."
-                           : LIBRARY + " is not an Android (arm64) library. Make it again with the guide's tool.";
+                wrong = es ? LIBRARY + " no es una librería para Android (arm64). Créalo de nuevo en este teléfono o con la herramienta de la guía."
+                           : LIBRARY + " is not an Android (arm64) library. Make it again on this phone or with the guide's tool.";
             else
                 wrong = libraryVersionProblem(c[2]);
+            // (the game and its update are there, the library isn't usable: it can be made here)
+            final File buildable = wrong != null && c[0] != null && c[1] != null ? picked : null;
             if (wrong == null) {
                 try {
                     dump.prepare(c[0], c[1], gameDir());
@@ -522,6 +633,9 @@ public class GameFolderActivity extends Activity {
             final String problem = wrong;
             runOnUiThread(() -> {
                 pick.setEnabled(true);
+                buildFolder = buildable;
+                buildHere.setVisibility(buildable != null ? android.view.View.VISIBLE : android.view.View.GONE);
+                if (buildable != null) buildHere.requestFocus();
                 if (problem != null) {
                     status.setTextColor(ALERT);
                     status.setText(problem);
@@ -549,7 +663,14 @@ public class GameFolderActivity extends Activity {
      * off). Each mod of mods/ becomes one folder:
      *   mods/0004000000126300/ (or only the update's 0004000E00126300/): Azahar's layout, as load/mods/0004000000126300/
      *   mods/<name>/0004000000126300/ (or 0004000E00126300/): load/mods/<name>/
-     *   mods/<name>/ with romfs/, romfs_ext/ or exefs/ in it: load/mods/<name>/
+     *   mods/<name>/ with romfs/, romfs_ext/ or exefs/ in it: load/mods/<name>/ (also from a folder up to three levels
+     *   down: a zip unpacked with its own folder, Luma3DS's luma/titles/0004000000126300/)
+     *   mods/<name>/ with the game's own folders (data/, eng/...) and no romfs/: load/mods/<name>/romfs/ (as the PC tools'
+     *   mod manager takes them)
+     * A mod only 1.0's search finds (further down, the game's own folders, the EUR game's title: 0.1.9.3 left it where it
+     * was) comes in off ("# off:" in load_order.txt, as ImportActivity's code mods) and named in load/mods/.found_off,
+     * which the Mods page shows until its list is saved: an update alone turns on no mod. The ones 0.1.9.3 found too
+     * come as they did.
      * load/mods/.from_game_folder lists them (name, a tab, the source's file count, size and latest date): a mod is copied
      * again only when it changed there, and removed when it is gone from there. The settings' order and switches stay.
      */
@@ -570,16 +691,27 @@ public class GameFolderActivity extends Activity {
         }
         // what is there now: name -> the folder to copy
         Map<String, File> now = new LinkedHashMap<>();
+        java.util.Set<String> bare = new java.util.HashSet<>();  // (the game's own folders: copied into a romfs/)
+        java.util.Set<String> deeper = new java.util.HashSet<>();  // (found only by 1.0's search: they come in off)
         File[] kids = from.isDirectory() ? from.listFiles(File::isDirectory) : null;
         if (kids != null) {
             Arrays.sort(kids);
             File title = titleIn(from);
-            if (title != null) now.put(MOD_TITLE, title);
+            if (title != null) {
+                now.put(modTitle(), title);
+                if (!modTitle().equals(MOD_TITLE) || !title.equals(titleIn(from, MOD_TITLE))) deeper.add(modTitle());
+            }
             for (File k : kids) {
                 if (k.getName().matches("(?i)[0-9a-f]{16}")) continue;  // (a title folder: done above, or another game's)
                 File src = titleIn(k);
-                if (src == null && isModRoot(k)) src = k;
-                if (src != null) now.put(k.getName(), src);
+                if (src == null) src = modRootIn(k, 0);
+                if (src == null && (src = gameFoldersIn(k, 0)) != null) bare.add(k.getName());
+                if (src == null) continue;
+                now.put(k.getName(), src);
+                // (0.1.9.3's two ways: the USA title's folder in it, else romfs/, romfs_ext/ or exefs/ right in it)
+                File before193 = titleIn(k, MOD_TITLE);
+                if (before193 == null && isModRoot(k)) before193 = k;
+                if (!src.equals(before193) || bare.contains(k.getName())) deeper.add(k.getName());
             }
         }
         // gone from there: gone from here
@@ -594,10 +726,21 @@ public class GameFolderActivity extends Activity {
                 android.util.Log.w("MH4U", "mods: " + name + " is in the game folder and in the app: the app's is kept");
                 continue;
             }
+            if (!before.containsKey(name) && deeper.contains(name)) {  // (off before it is there: a start cut short keeps it so)
+                try {
+                    to.mkdirs();
+                    ImportActivity.keepOff(to, name);
+                    addLine(new File(to, FOUND_OFF), name);
+                    android.util.Log.i("MH4U", "mods: " + name + " found in the game folder's mods by the deeper search: added off");
+                } catch (Exception x) {
+                    android.util.Log.e("MH4U", "mods: " + name + " not kept off (" + x + "): left out");
+                    continue;
+                }
+            }
             if (!sig.equals(before.get(name)) || !dest.isDirectory()) {
                 File tmp = new File(to, ".sync");
                 deleteTree(tmp);
-                copyTree(e.getValue(), tmp);
+                copyTree(e.getValue(), bare.contains(name) ? new File(tmp, "romfs") : tmp);
                 deleteTree(dest);
                 if (!tmp.renameTo(dest)) android.util.Log.e("MH4U", "mods: " + name + " not copied");
             }
@@ -616,22 +759,85 @@ public class GameFolderActivity extends Activity {
     }
 
     private static final String MOD_TITLE = "0004000000126300";
+    /** load/mods/.found_off: the mods syncMods added off, one name a line (the Mods page's note: app_native/content.cpp). */
+    static final String FOUND_OFF = ".found_off";
+
+    /** The line added to a list file, unless it has it already. */
+    private static void addLine(File list, String line) throws java.io.IOException {
+        for (String l : readLines(list)) if (l.trim().equals(line)) return;
+        try (FileOutputStream out = new FileOutputStream(list, true)) {
+            out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * The game's title as its mods folder is named: the program id of the game folder's exheader.bin (USA 0004000000126300,
+     * EUR 0004000000126100; an update's id counts as the game's), else the USA one.
+     */
+    private String modTitle() {
+        try (FileInputStream in = new FileInputStream(new File(gameDir(), "exheader.bin"))) {
+            byte[] e = new byte[0x208];
+            if (in.read(e) == e.length) {
+                long id = le(e, 0x200, 8) & ~0x0000000E00000000L;
+                if ((id >>> 32) == 0x00040000L) return String.format("%016X", id);
+            }
+        } catch (Exception ignored) {
+        }
+        return MOD_TITLE;
+    }
 
     /** The game's title folder in dir: the base game's, else the update's (Azahar's GetModId makes them one). */
-    private static File titleIn(File dir) {
-        File base = null, update = null;
+    private File titleIn(File dir) { return titleIn(dir, modTitle()); }
+
+    /** The folder of that title in dir: the base game's, else the update's. */
+    private static File titleIn(File dir, String title) {
+        String update = title.substring(0, 7) + "E" + title.substring(8);
+        File base = null, upd = null;
         File[] kids = dir.listFiles(File::isDirectory);
         if (kids != null)
             for (File k : kids) {
-                if (k.getName().equalsIgnoreCase(MOD_TITLE)) base = k;
-                else if (k.getName().equalsIgnoreCase("0004000E00126300")) update = k;
+                if (k.getName().equalsIgnoreCase(title)) base = k;
+                else if (k.getName().equalsIgnoreCase(update)) upd = k;
             }
-        return base != null ? base : update;
+        return base != null ? base : upd;
     }
 
     private static boolean isModRoot(File d) {
         for (String part : new String[] {"romfs", "romfs_ext", "exefs"}) if (new File(d, part).isDirectory()) return true;
         return false;
+    }
+
+    /** The folder with a mod's parts in d or up to three levels below it (the game's title folder first), or null. */
+    private File modRootIn(File d, int depth) {  // (not static: titleIn reads the game's own title, USA or EUR)
+        if (isModRoot(d)) return d;
+        if (depth >= 3) return null;
+        File t = titleIn(d);
+        if (t != null) return t;
+        File[] kids = d.listFiles(File::isDirectory);
+        if (kids == null) return null;
+        Arrays.sort(kids);
+        for (File k : kids) {
+            if (k.getName().matches("(?i)[0-9a-f]{16}")) continue;  // (another game's title folder)
+            File r = modRootIn(k, depth + 1);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    /** A folder in d or up to two levels below holding the game's own folders (data/, eng/...: ImportActivity's), or null. */
+    private static File gameFoldersIn(File d, int depth) {
+        File[] kids = d.listFiles(File::isDirectory);
+        if (kids == null) return null;
+        for (File k : kids)
+            for (String top : new String[] {"data", "eng", "fre", "ger", "ita", "spa", "jpn"})
+                if (k.getName().equalsIgnoreCase(top)) return d;
+        if (depth >= 2) return null;
+        Arrays.sort(kids);
+        for (File k : kids) {
+            File r = gameFoldersIn(k, depth + 1);
+            if (r != null) return r;
+        }
+        return null;
     }
 
     /** Its files' count, total size and latest date: what changes when the mod does. */

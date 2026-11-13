@@ -21,10 +21,22 @@ function Finish($code) {
     if (-not $NoPause) { Read-Host (T "Pulsa Enter para cerrar" "Press Enter to close") | Out-Null }
     exit $code
 }
+# (an error nobody expected: say it and wait, instead of a window that closes before it can be read)
+trap {
+    Write-Host ""
+    Write-Host ((T "Algo salió mal: " "Something went wrong: ") + $_)
+    Write-Host (T "Si pides ayuda, copia este texto." "If you ask for help, copy this text.")
+    Finish 1
+}
 
 $root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $tool = Join-Path $root "tools\build_game.py"
-if (-not (Test-Path $tool)) { Write-Host "Can't find $tool"; Finish 1 }
+if (-not (Test-Path $tool)) {
+    Write-Host "Can't find $tool"
+    Write-Host (T "Descomprime ENTERA la descarga (clic derecho en el ZIP, Extraer todo) y abre esto desde mh4n\tools\android." `
+                  "Unzip ALL of the download (right-click the ZIP, Extract All) and run this from mh4n\tools\android.")
+    Finish 1
+}
 
 # Python: the "py" launcher from python.org, or a "python" that really runs (the Microsoft Store alias without
 # Python installed doesn't)
@@ -89,18 +101,11 @@ if ($Game) {
     Write-Host ((T "Con los shaders del juego de " "With the game's shaders from ") + $Game)
 }
 if ($Mods) {
-    # build_game.py reads the code mods as the app does, from <user dir>\load\mods\<title>: a folder made for it
-    $title = Get-ChildItem -Path $Mods -Directory -Recurse -Depth 1 | Where-Object { $_.Name -match '^0004000[0eE]00126[13]00$' } | Select-Object -First 1
-    # (or the mod's own folder, with exefs in it: the layout the app's Mods page takes too)
-    if (-not $title -and (Test-Path (Join-Path $Mods "exefs"))) { $title = Get-Item $Mods }
-    if (-not $title) { Write-Host (T "En $Mods no hay una carpeta 0004000000126300 ni exefs." "There is no 0004000000126300 or exefs folder in $Mods."); Finish 1 }
-    $user = Join-Path $root "build\android-mods"
-    if (Test-Path $user) { Remove-Item -Recurse -Force $user }
-    $dest = Join-Path $user "load\mods\0004000000126300"
-    New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-    Copy-Item -Recurse $title.FullName $dest
-    $pyArgs += @("--mods", $user)
-    Write-Host ((T "Con los mods de " "With the mods of ") + $title.FullName)
+    # build_game.py takes the code mods of that folder as the app copies them to the phone's user folder (every mod in
+    # it, in the order the app loads them: GameFolderActivity.syncMods), and says if two of them don't go together
+    if (-not (Test-Path $Mods -PathType Container)) { Write-Host (T "No se encuentra $Mods." "Can't find $Mods."); Finish 1 }
+    $pyArgs += @("--game-mods", $Mods)
+    Write-Host ((T "Con los mods de " "With the mods of ") + $Mods)
 } else {
     $pyArgs += @("--no-mods")
 }

@@ -1,0 +1,3254 @@
+{
+ "description": "One screen: where the game's touch-screen menus go on the top screen (port/src/onescreen.cpp draws each root group there; tools/onescreen_table.py measures the layouts of your own game and writes port/src/onescreen_table.h). The data is Heavenfall's single-screen arrangement (Heavenfall Beta by popzol and BlitzWOLF, GPL-3.0, github.com/popzol/4u-heavenfall-mod-beta, core/game/data/curated: single_screen.json and game_gui/), taken at the commit in `source`, kept in its own words and units, without its gameplay changes. top_screen: layouts the game loads on the touch screen that go to the top one. layouts: a layout scaled by factor and pushed against an edge or corner (anchor), then moved by offset (pixels right and down); push: root groups pushed alone to that edge; nudge: root groups moved alone (pixels); hide: root groups not drawn; backdrop: a root group made to cover the top screen; fixed: root groups left as they are; priority and group_priority: the draw order added to the layout's groups (higher in front). arrangement: blocks (root groups of one layout that move together, `default` their place: x, y the top-left corner of what they show, in pixels of the screen they go to, scale, screen top or bottom, priority, hidden) and screens (a rule on the groups shown, all / any / none, and the place of each block there; {} the block's default); the first screen whose rule holds is the one in force. frames: sets of root groups moved together on the top screen while a scene's rule holds (scale and at: a point x, y goes to scale x + at x, scale y + at y). help_top: where the touch menus' description panel (ui006) goes on the top screen; prompt_stay_bottom: what of the yes / no box stays on the touch screen. arrangement.hides: panes inside a root group not drawn while it is placed (Heavenfall's game_gui/fixes.json, but the two it replaces with a picture of its own). What Heavenfall changes in the layout files or the executable beyond the place of a root group (panes inside a group moved, new pictures, the pad on the keyboard and the world map, the character creation's camera) is left out.",
+ "source": {
+  "project": "Heavenfall Beta",
+  "authors": "popzol, BlitzWOLF",
+  "license": "GPL-3.0",
+  "repository": "https://github.com/popzol/4u-heavenfall-mod-beta",
+  "commit": "7eebb7a3363881eb73c583a8af3903cc6f221dd7"
+ },
+ "top_screen": [
+  "ui409",
+  "ui419",
+  "ui015",
+  "ui036",
+  "ui032",
+  "ui800",
+  "ui415",
+  "ui430",
+  "ui521",
+  "ui541",
+  "ui038",
+  "ui405",
+  "ui417",
+  "ui474",
+  "ui481",
+  "ui471",
+  "ui500",
+  "ui700"
+ ],
+ "layouts": {
+  "ui445": {
+   "hide": [
+    "ui445_bace",
+    "ui445_camera_button",
+    "ui445_parts"
+   ]
+  },
+  "ui409": {
+   "factor": 0.8,
+   "anchor": "left",
+   "priority": 46,
+   "backdrop": "ui409_boad_haikei",
+   "group_priority": {
+    "ui409_ticket": 0
+   },
+   "hide": [
+    "ui409_button_que00",
+    "ui409_button_que01"
+   ],
+   "push": [
+    "ui409_list"
+   ],
+   "offset": [
+    0,
+    4
+   ]
+  },
+  "ui408": {
+   "factor": 0.8,
+   "anchor": "right",
+   "offset": [
+    0,
+    4
+   ]
+  },
+  "ui410": {
+   "priority": 3
+  },
+  "ui015": {
+   "backdrop": "ui015_l_bg",
+   "priority": 56,
+   "group_priority": {
+    "ui015_l_bg": 56
+   }
+  },
+  "ui010": {
+   "group_priority": {
+    "ui010_warnimg": 56
+   }
+  },
+  "ui032": {
+   "factor": 0.95,
+   "anchor": "bottom_left",
+   "offset": [
+    2,
+    -2
+   ]
+  },
+  "ui036": {
+   "factor": 1,
+   "anchor": "bottom_left",
+   "priority": 127,
+   "nudge": {
+    "ui036_yazi00": [
+     -153,
+     -37
+    ],
+    "ui036_button__000": [
+     148,
+     -23
+    ],
+    "ui036_button__001": [
+     148,
+     -23
+    ]
+   }
+  },
+  "ui005": {
+   "group_priority": {
+    "ui005_kaiwa00": 16,
+    "ui005_kaiwa01": 16,
+    "ui005_kaiwa02": 16,
+    "ui005_kaiwa03": 16,
+    "ui005_kaiwa04": 16,
+    "ui005_chat": 16
+   }
+  },
+  "ui500": {},
+  "ui705": {
+   "group_priority": {
+    "ui705_nunoback": 32,
+    "ui705_assign": 33
+   },
+   "hide": [
+    "ui705_hidariue",
+    "ui705_hidarisita",
+    "ui705_migiue",
+    "ui705_migisita"
+   ]
+  },
+  "ui419": {
+   "factor": 1,
+   "anchor": "left",
+   "move": "x",
+   "priority": 42,
+   "backdrop": "ui419_l_bg",
+   "hide": [
+    "ui419_l_chara"
+   ],
+   "offset": [
+    0,
+    9
+   ],
+   "nudge": {
+    "ui419_l_fukidashi": [
+     70,
+     -19
+    ]
+   }
+  },
+  "ui418": {
+   "factor": 0.65,
+   "anchor": "right",
+   "offset": [
+    0,
+    16
+   ],
+   "nudge": {
+    "ui418_g_kami__004": [
+     0,
+     400
+    ],
+    "ui418_g_kami__005": [
+     0,
+     400
+    ],
+    "ui418_g_nekomoyou_005": [
+     0,
+     400
+    ]
+   }
+  },
+  "ui404": {
+   "factor": 0.72,
+   "anchor": "bottom_right"
+  },
+  "ui411": {
+   "group_priority": {
+    "ui411_ticket_0": -30
+   }
+  },
+  "ui405": {
+   "factor": 0.76,
+   "anchor": "top_left",
+   "offset": [
+    4,
+    24
+   ],
+   "hide": [
+    "ui405_l_bg",
+    "ui405_l_chara",
+    "ui405_l_fukidashi"
+   ]
+  },
+  "ui417": {
+   "factor": 1,
+   "anchor": "left",
+   "move": "x",
+   "offset": [
+    4,
+    32
+   ]
+  },
+  "ui474": {
+   "factor": 0.75,
+   "anchor": "bottom_left",
+   "offset": [
+    2,
+    -2
+   ],
+   "hide": [
+    "ui474_base00"
+   ]
+  },
+  "ui480": {
+   "factor": 0.66,
+   "anchor": "center",
+   "move": "none",
+   "nudge": {
+    "ui480_otomo_stu_kyotu": [
+     -64.6,
+     45.1
+    ],
+    "ui480_mon_ori": [
+     65.8,
+     -15.9
+    ],
+    "ui480_neko_event": [
+     168.3,
+     83.8
+    ],
+    "ui480_ryo_ori": [
+     29.7,
+     98.1
+    ]
+   }
+  },
+  "ui481": {
+   "factor": 0.74,
+   "anchor": "center",
+   "move": "none",
+   "hide": [
+    "ui481_under",
+    "ui481_page_beta6_000"
+   ],
+   "nudge": {
+    "ui481_otomo_list": [
+     -76.3,
+     -12.4
+    ],
+    "ui481_yajiL": [
+     -76.3,
+     -12.4
+    ],
+    "ui481_page": [
+     -17.3,
+     -12.4
+    ],
+    "ui481_neko_event": [
+     -53.4,
+     -8.7
+    ],
+    "ui481_l_menu": [
+     -90.4,
+     -13.1
+    ],
+    "ui481_rank": [
+     -27.5,
+     -23.3
+    ]
+   }
+  },
+  "ui470": {
+   "group_priority": {
+    "ui470_base": -32
+   }
+  },
+  "ui471": {
+   "factor": 0.66,
+   "anchor": "top_left",
+   "offset": [
+    136,
+    3
+   ],
+   "hide": [
+    "ui471_group_000"
+   ]
+  },
+  "ui006": {
+   "factor": 0.75,
+   "anchor": "bottom_right",
+   "priority": 59,
+   "group_priority": {
+    "ui006_help00": 58
+   },
+   "hide": [
+    "ui006_naka00"
+   ],
+   "offset": [
+    23,
+    -4
+   ],
+   "nudge": {
+    "ui006_help00": [
+     26,
+     -6
+    ],
+    "ui006_help01": [
+     26,
+     -7
+    ]
+   }
+  },
+  "ui430": {
+   "factor": 0.8,
+   "anchor": "center",
+   "move": "none",
+   "priority": 56,
+   "offset": [
+    0,
+    -23
+   ],
+   "hide": [
+    "ui430_bg_002",
+    "ui430_bg_003",
+    "ui430_bg_004",
+    "ui430_sprite_010",
+    "ui430_sprite_014",
+    "ui430_sprite_015"
+   ],
+   "nudge": {
+    "ui430_l_online_icon": [
+     -16,
+     0
+    ],
+    "ui430_offline_icon": [
+     -16,
+     0
+    ],
+    "ui430_ad_hoc_icon": [
+     -16,
+     0
+    ]
+   }
+  },
+  "ui800": {
+   "factor": 0.875,
+   "anchor": "right",
+   "move": "none",
+   "offset": [
+    62,
+    0
+   ],
+   "hide": [
+    "ui800_l_uraita_p",
+    "ui800_l_uraita_o"
+   ],
+   "nudge": {
+    "ui800_l_kirikae": [
+     -20,
+     0
+    ]
+   }
+  },
+  "ui415": {
+   "factor": 0.875,
+   "anchor": "right",
+   "move": "none",
+   "offset": [
+    62,
+    0
+   ],
+   "hide": [
+    "ui415_l_uraita_p"
+   ],
+   "nudge": {
+    "ui415_l_botan_page": [
+     -7,
+     0
+    ]
+   }
+  },
+  "ui802": {
+   "hide": [
+    "ui802_l_kanban"
+   ],
+   "nudge": {
+    "ui802_l_player": [
+     268,
+     103
+    ],
+    "ui802_l_otomo": [
+     268,
+     83
+    ]
+   }
+  },
+  "ui520": {
+   "factor": 0.52,
+   "anchor": "left",
+   "move": "none",
+   "offset": [
+    -109,
+    -10
+   ],
+   "fixed": [
+    "ui520_haikei",
+    "ui520_ita",
+    "ui520_kami",
+    "ui520_nyannyan",
+    "ui520_kanban",
+    "ui520_bg"
+   ]
+  },
+  "ui521": {
+   "factor": 0.52,
+   "anchor": "right",
+   "move": "none",
+   "priority": 50,
+   "offset": [
+    90,
+    0
+   ]
+  },
+  "ui540": {
+   "factor": 0.56,
+   "anchor": "left",
+   "move": "none",
+   "offset": [
+    -116,
+    -7
+   ],
+   "fixed": [
+    "ui540_haikei",
+    "ui540_ita",
+    "ui540_kami",
+    "ui540_nyannyan",
+    "ui540_kanban",
+    "ui540_bg"
+   ]
+  },
+  "ui541": {
+   "factor": 0.56,
+   "anchor": "right",
+   "move": "none",
+   "priority": 50,
+   "offset": [
+    82,
+    -4
+   ]
+  },
+  "ui038": {
+   "factor": 0.6,
+   "anchor": "bottom_left",
+   "priority": 50,
+   "hide": [
+    "ui038_l_bg",
+    "ui038_l_mark"
+   ]
+  }
+ },
+ "arrangement": {
+  "layout_screens": {
+   "ui011": "bottom",
+   "ui560": "bottom",
+   "ui490": "bottom",
+   "ui501": "bottom",
+   "ui502": "bottom",
+   "ui503": "bottom",
+   "ui504": "bottom",
+   "ui511": "bottom",
+   "ui510": "top",
+   "ui530": "bottom",
+   "ui532": "bottom",
+   "ui060": "bottom",
+   "ui413": "bottom",
+   "ui495": "bottom",
+   "ui496": "top",
+   "ui497": "bottom",
+   "ui498": "top",
+   "ui443": "bottom",
+   "ui442": "top",
+   "ui455": "top",
+   "ui456": "bottom",
+   "ui422": "bottom",
+   "ui801": "top",
+   "ui803": "bottom",
+   "ui804": "top",
+   "ui805": "bottom",
+   "ui223": "bottom",
+   "ui230": "bottom",
+   "ui231": "bottom",
+   "ui232": "bottom",
+   "ui233": "bottom",
+   "ui234": "bottom",
+   "ui235": "bottom",
+   "ui236": "bottom",
+   "ui237": "bottom",
+   "ui238": "bottom",
+   "ui239": "bottom",
+   "ui240": "bottom",
+   "ui241": "bottom",
+   "ui242": "bottom",
+   "ui243": "bottom",
+   "ui001": "top",
+   "ui108": "bottom"
+  },
+  "blocks": [
+   {
+    "id": "ui560.topics",
+    "layout": "ui560",
+    "groups": [
+     "ui560_l_kami",
+     "ui560_help00"
+    ],
+    "default": {
+     "x": 73.6,
+     "y": 66,
+     "scale": 0.8,
+     "screen": "top",
+     "priority": 80
+    }
+   },
+   {
+    "id": "ui560.background",
+    "layout": "ui560",
+    "groups": [
+     "ui560_l_bg"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui011.background",
+    "layout": "ui011",
+    "groups": [
+     "ui011_l_bg"
+    ],
+    "default": {
+     "x": 40,
+     "y": 0,
+     "screen": "top",
+     "priority": 129
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui011.frame",
+    "layout": "ui011",
+    "groups": [
+     "ui011_l_shita"
+    ],
+    "default": {
+     "x": 47,
+     "y": 30.5,
+     "screen": "top",
+     "priority": 131
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui011.text",
+    "layout": "ui011",
+    "groups": [
+     "ui011_l_moji"
+    ],
+    "default": {
+     "x": 74,
+     "y": 121,
+     "screen": "top",
+     "priority": 132
+    }
+   },
+   {
+    "id": "ui011.arrows",
+    "layout": "ui011",
+    "groups": [
+     "ui011_l_yajirushi"
+    ],
+    "default": {
+     "x": 48,
+     "y": 110,
+     "screen": "top",
+     "priority": 133
+    }
+   },
+   {
+    "id": "ui011.picture",
+    "layout": "ui011",
+    "groups": [
+     "ui011_l_gazou"
+    ],
+    "default": {
+     "x": 160,
+     "y": 65,
+     "screen": "top",
+     "priority": 134
+    }
+   },
+   {
+    "id": "ui011.title",
+    "layout": "ui011",
+    "groups": [
+     "ui011_l_midashi"
+    ],
+    "default": {
+     "x": 110,
+     "y": 40,
+     "screen": "top",
+     "priority": 135
+    }
+   },
+   {
+    "id": "ui490.pages",
+    "layout": "ui490",
+    "groups": [
+     "ui490_l_item",
+     "ui490_l_item_1"
+    ],
+    "default": {
+     "x": 82.3,
+     "y": 35.5,
+     "scale": 0.75,
+     "screen": "top",
+     "priority": 57
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui490.menu",
+    "layout": "ui490",
+    "groups": [
+     "ui490_system_0",
+     "ui490_system_1",
+     "ui490_system_2",
+     "ui490_system_3",
+     "ui490_sign"
+    ],
+    "default": {
+     "x": 80.8,
+     "y": 40,
+     "scale": 0.75,
+     "screen": "top",
+     "priority": 58
+    }
+   },
+   {
+    "id": "ui490.background",
+    "layout": "ui490",
+    "groups": [
+     "ui490_layer_001"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui530.menu",
+    "layout": "ui530",
+    "groups": [
+     "ui530_l_mark",
+     "ui530_ui530",
+     "ui530_f_inv"
+    ],
+    "default": {
+     "x": 88,
+     "y": 85.5,
+     "scale": 0.7,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui530.background",
+    "layout": "ui530",
+    "groups": [
+     "ui530_l_bg"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui502.card",
+    "layout": "ui502",
+    "groups": [
+     "ui502_kihon",
+     "ui502_buki_siyou",
+     "ui502_hunter_dialy",
+     "ui502_otomo_kiroku",
+     "ui502_kunshou_top",
+     "ui502_kunshou_naka",
+     "ui502_M_dialy",
+     "ui502_tougitaikai",
+     "ui502_yajirusi",
+     "ui502_new_naka",
+     "ui502_new_top",
+     "ui502_kira",
+     "ui502_midashi"
+    ],
+    "default": {
+     "x": 40,
+     "y": 3,
+     "scale": 1,
+     "screen": "top",
+     "priority": 56
+    }
+   },
+   {
+    "id": "ui502.greeting",
+    "layout": "ui502",
+    "groups": [
+     "ui502_kihon"
+    ],
+    "part": [
+     "ui502_FL_X_button",
+     "ui502_x",
+     "ui502_m_m"
+    ],
+    "default": {
+     "x": 238,
+     "y": 210,
+     "scale": 1
+    }
+   },
+   {
+    "id": "ui502.background",
+    "layout": "ui502",
+    "groups": [
+     "ui502_bg"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui503.edit",
+    "layout": "ui503",
+    "groups": [
+     "ui503_hensyu_window",
+     "ui503_syogo_window"
+    ],
+    "default": {
+     "x": 88,
+     "y": 84.1,
+     "scale": 0.7,
+     "screen": "top",
+     "priority": 56
+    }
+   },
+   {
+    "id": "ui503.background",
+    "layout": "ui503",
+    "groups": [
+     "ui503_BG"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui504.list",
+    "layout": "ui504",
+    "groups": [
+     "ui504_guildcard_list",
+     "ui504_red_line",
+     "ui504_arrow_red"
+    ],
+    "default": {
+     "x": 67.2,
+     "y": 62.4,
+     "scale": 0.83,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui504.background",
+    "layout": "ui504",
+    "groups": [
+     "ui504_BG"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui501.background",
+    "layout": "ui501",
+    "groups": [
+     "ui501_bg"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui501.friends",
+    "layout": "ui501",
+    "groups": [
+     "ui501_furatto_list",
+     "ui501_furatto_irai_1",
+     "ui501_furatto_irai_2",
+     "ui501_button_kakutei",
+     "ui501_button_q_irai",
+     "ui501_button_idou"
+    ],
+    "default": {
+     "x": 88,
+     "y": 84.1,
+     "scale": 0.7,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui511.menus",
+    "layout": "ui511",
+    "groups": [
+     "ui511_BG",
+     "ui511_sure_commu",
+     "ui511_guildcard_box1",
+     "ui511_guildcard_box2",
+     "ui511_sure_set",
+     "ui511_commu_set",
+     "ui511_quest_set",
+     "ui511_otomo_set",
+     "ui511_otomo_box",
+     "ui511_quest_box",
+     "ui511_neko"
+    ],
+    "default": {
+     "x": 88,
+     "y": 86.2,
+     "scale": 0.7,
+     "screen": "top",
+     "priority": 57
+    }
+   },
+   {
+    "id": "ui510.panels",
+    "layout": "ui510",
+    "groups": [
+     "ui510_sure_setting",
+     "ui510_guild_info",
+     "ui510_otomo_info",
+     "ui510_otomo_status",
+     "ui510_levelquest_info",
+     "ui510_search_quest"
+    ],
+    "default": {
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui510.background",
+    "layout": "ui510",
+    "groups": [
+     "ui510_base"
+    ],
+    "default": {
+     "screen": "top"
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui532.board",
+    "layout": "ui532",
+    "groups": [
+     "ui532_BG",
+     "ui532_toroku_p",
+     "ui532_hozon_p",
+     "ui532_box",
+     "ui532_hozonquest",
+     "ui532_kyotsu",
+     "ui532_sel",
+     "ui532_boundary_00",
+     "ui532_boundary_01",
+     "ui532_boundary_02"
+    ],
+    "default": {
+     "priority": 12
+    }
+   },
+   {
+    "id": "ui060.search",
+    "layout": "ui060",
+    "groups": [
+     "ui060_midasi",
+     "ui060_player",
+     "ui060_yajirusi",
+     "ui060_midasi_1",
+     "ui060_online",
+     "ui060_ita_1",
+     "ui060_ita_2",
+     "ui060_PL_buki_bougu",
+     "ui060_caravan"
+    ],
+    "default": {
+     "x": 72,
+     "y": 63,
+     "scale": 0.8,
+     "screen": "top",
+     "priority": 57
+    }
+   },
+   {
+    "id": "ui060.background",
+    "layout": "ui060",
+    "groups": [
+     "ui060_bg"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui443.list",
+    "layout": "ui443",
+    "groups": [
+     "ui443_midasi",
+     "ui443_list",
+     "ui443_cur"
+    ],
+    "default": {
+     "priority": 44
+    }
+   },
+   {
+    "id": "ui443.background",
+    "layout": "ui443",
+    "groups": [
+     "ui443_bg"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui442.gallery",
+    "layout": "ui442",
+    "groups": [
+     "ui442_Gallery_ue"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui455.stock",
+    "layout": "ui455",
+    "groups": [
+     "ui455_listwaku",
+     "ui455_item",
+     "ui455_moji"
+    ],
+    "default": {
+     "x": 2,
+     "y": 58,
+     "scale": 0.9,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui455.details",
+    "layout": "ui455",
+    "groups": [
+     "ui455_subwaku02"
+    ],
+    "default": {
+     "x": 0,
+     "y": 117,
+     "scale": 0.72,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui456.list",
+    "layout": "ui456",
+    "groups": [
+     "ui456_l_kami",
+     "ui456_l_top"
+    ],
+    "default": {
+     "x": 211,
+     "y": 1,
+     "scale": 0.7,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui456.balloon",
+    "layout": "ui456",
+    "groups": [
+     "ui456_l_fukidashi",
+     "ui456_l_chara"
+    ],
+    "default": {
+     "x": 290,
+     "y": 109,
+     "scale": 0.7,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui456.background",
+    "layout": "ui456",
+    "groups": [
+     "ui456_l_bg"
+    ],
+    "default": {
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui413.background",
+    "layout": "ui413",
+    "groups": [
+     "ui413_boad_haikei"
+    ],
+    "default": {
+     "x": 40,
+     "y": 0,
+     "screen": "top"
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui413.quests",
+    "layout": "ui413",
+    "groups": [
+     "ui413_questboad"
+    ],
+    "default": {
+     "x": 2.8,
+     "y": 42.02,
+     "scale": 0.66,
+     "screen": "top",
+     "priority": 47
+    }
+   },
+   {
+    "id": "ui495.background",
+    "layout": "ui495",
+    "groups": [
+     "ui495_boad_haikei"
+    ],
+    "default": {
+     "x": 40,
+     "y": 0,
+     "screen": "top"
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui495.menu",
+    "layout": "ui495",
+    "groups": [
+     "ui495_tougijyo"
+    ],
+    "default": {
+     "x": 6.11,
+     "y": 40.78,
+     "scale": 0.66,
+     "screen": "top",
+     "priority": 47
+    }
+   },
+   {
+    "id": "ui495.menu_2",
+    "layout": "ui495",
+    "groups": [
+     "ui495_tougijyo_1"
+    ],
+    "default": {
+     "x": 7.43,
+     "y": 52,
+     "scale": 0.66,
+     "screen": "top",
+     "priority": 48
+    }
+   },
+   {
+    "id": "ui495.leaderboards",
+    "layout": "ui495",
+    "groups": [
+     "ui495_ranking"
+    ],
+    "default": {
+     "x": 0.5,
+     "y": 42.1,
+     "scale": 0.66,
+     "screen": "top",
+     "priority": 49
+    }
+   },
+   {
+    "id": "ui495.members",
+    "layout": "ui495",
+    "groups": [
+     "ui495_member"
+    ],
+    "default": {
+     "x": 0.5,
+     "y": 42.1,
+     "scale": 0.66,
+     "screen": "top",
+     "priority": 50
+    }
+   },
+   {
+    "id": "ui496.background",
+    "layout": "ui496",
+    "groups": [
+     "ui496_BG"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui496.info",
+    "layout": "ui496",
+    "groups": [
+     "ui496_time_ranking",
+     "ui496_info_ranking",
+     "ui496_help00",
+     "ui496_help01"
+    ],
+    "default": {
+     "x": 215.92,
+     "y": 73.72,
+     "scale": 0.52,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui497.choice",
+    "layout": "ui497",
+    "groups": [
+     "ui497_ui497"
+    ],
+    "default": {
+     "x": 16.4,
+     "y": -12.94,
+     "scale": 0.7,
+     "screen": "top",
+     "priority": 11
+    }
+   },
+   {
+    "id": "ui498.background",
+    "layout": "ui498",
+    "groups": [
+     "ui498_BG"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui498.items",
+    "layout": "ui498",
+    "groups": [
+     "ui498_b_waku00"
+    ],
+    "default": {
+     "x": 2,
+     "y": 139,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui498.time",
+    "layout": "ui498",
+    "groups": [
+     "ui498_l_time"
+    ],
+    "default": {
+     "x": 293,
+     "y": 1,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui498.curtain",
+    "layout": "ui498",
+    "groups": [
+     "ui498_noren"
+    ],
+    "default": {
+     "hidden": true
+    }
+   },
+   {
+    "id": "ui422.map",
+    "layout": "ui422",
+    "groups": [
+     "ui422_map",
+     "ui422_Circle_icon",
+     "ui422_icon",
+     "ui422_serifu_icon",
+     "ui422_player_icon"
+    ],
+    "default": {
+     "hidden": true
+    }
+   },
+   {
+    "id": "ui804.art",
+    "layout": "ui804",
+    "groups": [
+     "ui804_title"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui804.logo",
+    "layout": "ui804",
+    "groups": [
+     "ui804_title"
+    ],
+    "part": [
+     "ui804_shadow",
+     "ui804_mark",
+     "ui804_title10_00",
+     "ui804_title10",
+     "ui804_title10_000",
+     "ui804_title10_01",
+     "ui804_title10_11"
+    ],
+    "default": {
+     "x": 84,
+     "y": 13.4,
+     "scale": 0.76
+    }
+   },
+   {
+    "id": "ui804.copyright",
+    "layout": "ui804",
+    "groups": [
+     "ui804_title"
+    ],
+    "part": [
+     "ui804_syouhyou"
+    ],
+    "default": {
+     "x": 80,
+     "y": 221.6,
+     "scale": 0.6
+    }
+   },
+   {
+    "id": "ui804.sign",
+    "layout": "ui804",
+    "groups": [
+     "ui804_l_kanban"
+    ],
+    "default": {
+     "hidden": true
+    }
+   },
+   {
+    "id": "ui801.carpet",
+    "layout": "ui801",
+    "groups": [
+     "ui801_l_bg"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui805.press",
+    "layout": "ui805",
+    "groups": [
+     "ui805_u_title"
+    ],
+    "default": {
+     "x": 159.1,
+     "y": 190.4,
+     "scale": 0.55,
+     "screen": "top",
+     "priority": 2
+    }
+   },
+   {
+    "id": "ui803.background",
+    "layout": "ui803",
+    "groups": [
+     "ui803_bg"
+    ],
+    "default": {
+     "priority": 2,
+     "hidden": true
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui803.menu",
+    "layout": "ui803",
+    "groups": [
+     "ui803_top_menu"
+    ],
+    "default": {
+     "x": 56,
+     "y": 17.85,
+     "scale": 0.9,
+     "screen": "top",
+     "priority": 3
+    }
+   },
+   {
+    "id": "ui803.saves",
+    "layout": "ui803",
+    "groups": [
+     "ui803_continue",
+     "ui803_convertmark"
+    ],
+    "default": {
+     "x": 4.6,
+     "y": 43.6,
+     "scale": 0.81,
+     "screen": "top",
+     "priority": 3
+    }
+   },
+   {
+    "id": "ui803.options",
+    "layout": "ui803",
+    "groups": [
+     "ui803_game_settei",
+     "ui803_language_settei"
+    ],
+    "default": {
+     "x": 56,
+     "y": 14.25,
+     "scale": 0.9,
+     "screen": "top",
+     "priority": 3
+    }
+   },
+   {
+    "id": "ui223.background",
+    "layout": "ui223",
+    "groups": [
+     "ui223_boad_haikei"
+    ],
+    "backdrop": true
+   },
+   {
+    "id": "ui223.page",
+    "layout": "ui223",
+    "groups": [
+     "ui223_wea_paper",
+     "ui223_midasi_1",
+     "ui223_page",
+     "ui223_page_under"
+    ]
+   },
+   {
+    "id": "ui230.page",
+    "layout": "ui230",
+    "groups": [
+     "ui230_lsrowd"
+    ]
+   },
+   {
+    "id": "ui231.page",
+    "layout": "ui231",
+    "groups": [
+     "ui231_lsrowd200"
+    ]
+   },
+   {
+    "id": "ui232.page",
+    "layout": "ui232",
+    "groups": [
+     "ui232_sword"
+    ]
+   },
+   {
+    "id": "ui233.page",
+    "layout": "ui233",
+    "groups": [
+     "ui233_wsword"
+    ]
+   },
+   {
+    "id": "ui234.page",
+    "layout": "ui234",
+    "groups": [
+     "ui234_hammer"
+    ]
+   },
+   {
+    "id": "ui235.page",
+    "layout": "ui235",
+    "groups": [
+     "ui235_hammer200"
+    ]
+   },
+   {
+    "id": "ui236.page",
+    "layout": "ui236",
+    "groups": [
+     "ui236_lance"
+    ]
+   },
+   {
+    "id": "ui237.page",
+    "layout": "ui237",
+    "groups": [
+     "ui237_lance200"
+    ]
+   },
+   {
+    "id": "ui238.page",
+    "layout": "ui238",
+    "groups": [
+     "ui238_axe"
+    ]
+   },
+   {
+    "id": "ui239.page",
+    "layout": "ui239",
+    "groups": [
+     "ui239_gaxe"
+    ]
+   },
+   {
+    "id": "ui240.page",
+    "layout": "ui240",
+    "groups": [
+     "ui240_rod"
+    ]
+   },
+   {
+    "id": "ui241.page",
+    "layout": "ui241",
+    "groups": [
+     "ui241_rod200"
+    ]
+   },
+   {
+    "id": "ui242.page",
+    "layout": "ui242",
+    "groups": [
+     "ui242_bowgun"
+    ]
+   },
+   {
+    "id": "ui243.page",
+    "layout": "ui243",
+    "groups": [
+     "ui243_bow"
+    ]
+   },
+   {
+    "id": "ui001.names",
+    "layout": "ui001",
+    "groups": [
+     "ui001_pop1"
+    ],
+    "default": {
+     "priority": 0
+    },
+    "backdrop": true
+   },
+   {
+    "id": "ui108.balloon",
+    "layout": "ui108",
+    "groups": [
+     "ui108_l_fukidashi"
+    ],
+    "default": {
+     "x": 4,
+     "y": 114.1,
+     "scale": 0.6,
+     "screen": "top"
+    }
+   },
+   {
+    "id": "ui108.characters",
+    "layout": "ui108",
+    "groups": [
+     "ui108_l_uketsuke",
+     "ui108_l_dancyo",
+     "ui108_l_neko",
+     "ui108_l_kaizou",
+     "ui108_l_jijii",
+     "ui108_l_ganna",
+     "ui108_l_beteran",
+     "ui108_l_rida",
+     "ui108_l_raibaru",
+     "ui108_l_bukiya",
+     "ui108_l_sisyo"
+    ],
+    "default": {
+     "x": 4,
+     "y": 172.1,
+     "scale": 0.7,
+     "screen": "top"
+    }
+   }
+  ],
+  "backdrops": {
+   "ui011": "ui011_l_bg",
+   "ui413": "ui413_boad_haikei",
+   "ui495": "ui495_boad_haikei",
+   "ui496": "ui496_BG"
+  },
+  "screens": [
+   {
+    "id": "press_a",
+    "number": "01",
+    "when": {
+     "all": [
+      "ui805_u_title"
+     ]
+    },
+    "blocks": {
+     "ui805.press": {}
+    },
+    "file": "title.json"
+   },
+   {
+    "id": "main_menu",
+    "number": "02",
+    "when": {
+     "all": [
+      "ui803_top_menu"
+     ]
+    },
+    "blocks": {
+     "ui804.art": {},
+     "ui803.background": {
+      "x": 40.0,
+      "y": 0.0,
+      "screen": "top",
+      "hidden": false
+     },
+     "ui803.menu": {}
+    },
+    "file": "title.json"
+   },
+   {
+    "id": "save_list",
+    "number": "06",
+    "when": {
+     "all": [
+      "ui803_continue"
+     ]
+    },
+    "blocks": {
+     "ui801.carpet": {},
+     "ui803.saves": {}
+    },
+    "file": "title.json"
+   },
+   {
+    "id": "main_menu_options",
+    "number": "07",
+    "when": {
+     "any": [
+      "ui803_game_settei",
+      "ui803_language_settei"
+     ],
+     "none": [
+      "ui803_top_menu"
+     ]
+    },
+    "blocks": {
+     "ui804.art": {},
+     "ui803.options": {}
+    },
+    "file": "title.json"
+   },
+   {
+    "id": "town_minimap",
+    "number": "10",
+    "when": {
+     "all": [
+      "ui422_map",
+      "ui430_l_minimap"
+     ],
+     "none": [
+      "ui422_ss_minimap_off",
+      "ui005_kaiwa00",
+      "ui005_kaiwa01",
+      "ui005_kaiwa02",
+      "ui005_kaiwa04"
+     ]
+    },
+    "blocks": {
+     "ui422.map": {
+      "x": 7.0,
+      "y": 141.2,
+      "scale": 0.4,
+      "screen": "top",
+      "hidden": false
+     }
+    },
+    "file": "town.json"
+   },
+   {
+    "id": "song_select",
+    "number": "13",
+    "when": {
+     "any": [
+      "ui443_bg",
+      "ui443_list",
+      "ui443_midasi",
+      "ui443_cur"
+     ],
+     "none": [
+      "ui442_Gallery_ue"
+     ]
+    },
+    "blocks": {
+     "ui443.list": {
+      "x": 49.6,
+      "y": 42.0,
+      "scale": 0.94,
+      "screen": "top"
+     },
+     "ui443.background": {
+      "hidden": true
+     }
+    },
+    "file": "town.json"
+   },
+   {
+    "id": "gallery",
+    "number": "14",
+    "when": {
+     "all": [
+      "ui442_Gallery_ue",
+      "ui443_list"
+     ]
+    },
+    "blocks": {
+     "ui443.list": {
+      "x": 180.0,
+      "y": 88.0,
+      "scale": 0.64,
+      "screen": "top",
+      "priority": 44
+     }
+    },
+    "file": "town.json"
+   },
+   {
+    "id": "wyceum_menu",
+    "number": "27",
+    "when": {
+     "all": [
+      "ui455_listwaku"
+     ],
+     "none": [
+      "ui456_l_kami"
+     ]
+    },
+    "blocks": {
+     "ui455.stock": {}
+    },
+    "file": "town.json"
+   },
+   {
+    "id": "wyceum_wystones",
+    "number": "28",
+    "when": {
+     "all": [
+      "ui456_l_kami"
+     ]
+    },
+    "blocks": {
+     "ui455.details": {},
+     "ui456.list": {},
+     "ui456.balloon": {},
+     "ui456.background": {}
+    },
+    "file": "town.json"
+   },
+   {
+    "id": "arena_counter",
+    "number": "61",
+    "when": {
+     "all": [
+      "ui495_boad_haikei"
+     ],
+     "any": [
+      "ui495_tougijyo",
+      "ui495_tougijyo_1",
+      "ui495_ranking",
+      "ui495_member"
+     ]
+    },
+    "blocks": {
+     "ui495.background": {},
+     "ui495.menu": {},
+     "ui495.menu_2": {},
+     "ui495.leaderboards": {},
+     "ui495.members": {},
+     "ui496.background": {},
+     "ui496.info": {}
+    },
+    "file": "quests.json"
+   },
+   {
+    "id": "arena_choice",
+    "number": "62",
+    "when": {
+     "all": [
+      "ui497_ui497"
+     ]
+    },
+    "blocks": {
+     "ui497.choice": {},
+     "ui498.background": {},
+     "ui498.items": {},
+     "ui498.time": {},
+     "ui498.curtain": {}
+    },
+    "file": "quests.json"
+   },
+   {
+    "id": "arena_quest_list",
+    "number": "65",
+    "when": {
+     "all": [
+      "ui495_boad_haikei"
+     ],
+     "none": [
+      "ui495_tougijyo",
+      "ui495_tougijyo_1",
+      "ui495_ranking",
+      "ui495_member"
+     ]
+    },
+    "blocks": {
+     "ui495.background": {}
+    },
+    "file": "quests.json"
+   },
+   {
+    "id": "quest_board",
+    "number": "66",
+    "when": {
+     "all": [
+      "ui413_questboad"
+     ]
+    },
+    "blocks": {
+     "ui413.background": {},
+     "ui413.quests": {}
+    },
+    "file": "quests.json"
+   },
+   {
+    "id": "loading_characters",
+    "number": "67",
+    "when": {
+     "all": [
+      "ui108_l_fukidashi"
+     ]
+    },
+    "blocks": {
+     "ui108.balloon": {},
+     "ui108.characters": {}
+    },
+    "file": "loading.json"
+   },
+   {
+    "id": "help_topics",
+    "number": "70",
+    "when": {
+     "all": [
+      "ui560_l_bg"
+     ],
+     "none": [
+      "ui011_l_bg"
+     ]
+    },
+    "blocks": {
+     "ui560.topics": {},
+     "ui560.background": {}
+    },
+    "file": "help.json"
+   },
+   {
+    "id": "help_topic_open",
+    "number": "71",
+    "when": {
+     "all": [
+      "ui560_l_bg",
+      "ui011_l_bg"
+     ]
+    },
+    "blocks": {
+     "ui011.background": {},
+     "ui011.frame": {},
+     "ui011.text": {},
+     "ui011.arrows": {},
+     "ui011.picture": {},
+     "ui011.title": {},
+     "ui560.topics": {},
+     "ui560.background": {}
+    },
+    "file": "help.json"
+   },
+   {
+    "id": "help_tutorial",
+    "number": "72",
+    "when": {
+     "all": [
+      "ui011_l_bg"
+     ],
+     "none": [
+      "ui560_l_bg"
+     ]
+    },
+    "blocks": {
+     "ui011.background": {},
+     "ui011.frame": {},
+     "ui011.text": {},
+     "ui011.arrows": {},
+     "ui011.picture": {},
+     "ui011.title": {}
+    },
+    "file": "help.json"
+   },
+   {
+    "id": "weapon_guide",
+    "number": "73",
+    "when": {
+     "all": [
+      "ui223_wea_paper",
+      "ui020_listwaku00_001"
+     ]
+    },
+    "blocks": {
+     "ui223.background": {
+      "hidden": true
+     },
+     "ui223.page": {
+      "x": 2,
+      "y": 19,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui230.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui231.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui232.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui233.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui234.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui235.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui236.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui237.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui238.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui239.page": {
+      "x": 4.1,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui240.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui241.page": {
+      "x": 4.8,
+      "y": 38.6,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui242.page": {
+      "x": 3.4,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     },
+     "ui243.page": {
+      "x": 4.8,
+      "y": 40.0,
+      "scale": 0.7,
+      "screen": "top"
+     }
+    },
+    "file": "guild_help.json"
+   },
+   {
+    "id": "hall_creation",
+    "number": "76",
+    "when": {
+     "any": [
+      "ui490_l_item",
+      "ui490_l_item_1"
+     ],
+     "none": [
+      "ui560_l_bg"
+     ]
+    },
+    "blocks": {
+     "ui490.pages": {},
+     "ui490.menu": {},
+     "ui490.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "hall_creation_help",
+    "number": "76b",
+    "when": {
+     "all": [
+      "ui560_l_bg"
+     ],
+     "any": [
+      "ui490_l_item",
+      "ui490_l_item_1"
+     ]
+    },
+    "blocks": {
+     "ui490.pages": {
+      "hidden": true
+     },
+     "ui490.menu": {
+      "hidden": true
+     },
+     "ui490.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "guild_card",
+    "number": "78",
+    "when": {
+     "all": [
+      "ui502_bg"
+     ],
+     "none": [
+      "ui503_BG",
+      "ui504_BG",
+      "ui502_M_dialy"
+     ]
+    },
+    "blocks": {
+     "ui502.card": {},
+     "ui502.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "guild_card_monsters",
+    "number": "78b",
+    "when": {
+     "all": [
+      "ui502_bg",
+      "ui502_M_dialy"
+     ]
+    },
+    "blocks": {
+     "ui502.card": {},
+     "ui502.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "guild_card_edit",
+    "number": "79",
+    "when": {
+     "all": [
+      "ui503_BG"
+     ]
+    },
+    "blocks": {
+     "ui503.edit": {},
+     "ui503.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "guild_card_list",
+    "number": "80",
+    "when": {
+     "all": [
+      "ui504_BG"
+     ]
+    },
+    "blocks": {
+     "ui504.list": {},
+     "ui504.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "hunter_search",
+    "number": "81",
+    "when": {
+     "all": [
+      "ui060_bg"
+     ]
+    },
+    "blocks": {
+     "ui060.search": {},
+     "ui060.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "friends",
+    "number": "82",
+    "when": {
+     "any": [
+      "ui501_bg",
+      "ui501_furatto_list",
+      "ui501_furatto_irai_1",
+      "ui501_furatto_irai_2"
+     ]
+    },
+    "blocks": {
+     "ui501.friends": {},
+     "ui501.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "online_menu",
+    "number": "83",
+    "when": {
+     "any": [
+      "ui530_l_bg",
+      "ui530_ui530",
+      "ui530_f_inv"
+     ]
+    },
+    "blocks": {
+     "ui530.menu": {},
+     "ui530.background": {}
+    },
+    "file": "multiplayer.json"
+   },
+   {
+    "id": "courier",
+    "number": "84",
+    "when": {
+     "all": [
+      "ui511_BG"
+     ],
+     "none": [
+      "ui511_guildcard_box1",
+      "ui511_guildcard_box2",
+      "ui511_quest_box",
+      "ui511_otomo_box",
+      "ui511_quest_set",
+      "ui511_otomo_set"
+     ]
+    },
+    "blocks": {
+     "ui511.menus": {
+      "x": 2.0,
+      "y": 66.48,
+      "scale": 0.72
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "courier.json"
+   },
+   {
+    "id": "courier_cards",
+    "number": "85",
+    "when": {
+     "all": [
+      "ui511_BG"
+     ],
+     "any": [
+      "ui511_guildcard_box1",
+      "ui511_guildcard_box2"
+     ]
+    },
+    "blocks": {
+     "ui511.menus": {
+      "x": 2.0,
+      "y": 66.48,
+      "scale": 0.72
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "courier.json"
+   },
+   {
+    "id": "courier_quests_received",
+    "number": "86",
+    "when": {
+     "all": [
+      "ui511_BG",
+      "ui511_quest_box"
+     ]
+    },
+    "blocks": {
+     "ui511.menus": {
+      "x": 2.0,
+      "y": 66.48,
+      "scale": 0.72
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "courier.json"
+   },
+   {
+    "id": "courier_palicoes_received",
+    "number": "87",
+    "when": {
+     "all": [
+      "ui511_BG",
+      "ui511_otomo_box"
+     ]
+    },
+    "blocks": {
+     "ui511.menus": {
+      "x": 2.0,
+      "y": 66.48,
+      "scale": 0.72
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "courier.json"
+   },
+   {
+    "id": "courier_quests_sent",
+    "number": "88",
+    "when": {
+     "all": [
+      "ui511_BG",
+      "ui511_quest_set"
+     ]
+    },
+    "blocks": {
+     "ui511.menus": {
+      "x": 2.0,
+      "y": 66.48,
+      "scale": 0.72
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "courier.json"
+   },
+   {
+    "id": "courier_palicoes_sent",
+    "number": "89",
+    "when": {
+     "all": [
+      "ui511_BG",
+      "ui511_otomo_set"
+     ]
+    },
+    "blocks": {
+     "ui511.menus": {
+      "x": 2.0,
+      "y": 66.48,
+      "scale": 0.72
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "courier.json"
+   },
+   {
+    "id": "guild_quests",
+    "number": "90",
+    "when": {
+     "all": [
+      "ui532_hozonquest",
+      "ui510_levelquest_info"
+     ]
+    },
+    "blocks": {
+     "ui532.board": {
+      "x": 2.0,
+      "y": 46.0,
+      "scale": 0.64,
+      "screen": "top",
+      "priority": 57
+     },
+     "ui510.panels": {
+      "x": 127.2,
+      "y": 42.0,
+      "scale": 0.72
+     },
+     "ui510.background": {}
+    },
+    "file": "guild_quests.json"
+   }
+  ],
+  "hides": {
+   "ui011": [
+    "ui011_sen_r"
+   ],
+   "ui511": [
+    "ui511_sprite_008",
+    "ui511_wb_000"
+   ],
+   "ui497": [
+    "ui497_BG"
+   ],
+   "ui805": [
+    "ui805_back00"
+   ],
+   "ui442": [
+    "ui442_Gallery_moji",
+    "ui442_sprite_009"
+   ]
+  }
+ },
+ "frames": {
+  "sets": {
+   "palico list": [
+    "ui470_kanri",
+    "ui470_main_waku00",
+    "ui475_regular00",
+    "ui475_hikae_waku00",
+    "ui026_yazi00",
+    "ui026_yazi01"
+   ],
+   "palico info": [
+    "ui470_s_zyouhou"
+   ],
+   "palico status": [
+    "ui035_otomo_stu_kyotu",
+    "ui035_otomo_stu_1P",
+    "ui035_otomo_stu_2PA",
+    "ui035_otomo_stu_2PB",
+    "ui035_otomo_stu_3P",
+    "ui035_otomo_stu_4P",
+    "ui035_otomo_stu_syujin",
+    "ui035_otomo_stu_spskill",
+    "ui035_otomo_stu_tdskill",
+    "ui035_otomo_stu_comment",
+    "ui035_yazi00",
+    "ui035_yazi01"
+   ],
+   "main info": [
+    "ui471_bace",
+    "ui471_1P",
+    "ui471_23P",
+    "ui471_kira"
+   ],
+   "palico gear": [
+    "ui470_main_waku01",
+    "ui034_b_waku00",
+    "ui034_k_mark",
+    "ui034_icon00",
+    "ui034_soubi_nashi",
+    "ui034_otomo_buki",
+    "ui034_otomo_bougu",
+    "ui034_yazi00",
+    "ui034_yazi01",
+    "ui041_b_waku00",
+    "ui041_k_mark",
+    "ui041_icon00",
+    "ui041_soubi_nashi",
+    "ui041_otomo_buki",
+    "ui041_otomo_bougu",
+    "ui041_yazi00",
+    "ui041_yazi01"
+   ],
+   "item box": [
+    "ui400_boxwaku00",
+    "ui400_boxcursor00",
+    "ui400_boxcursor01",
+    "ui400_boxcursor02",
+    "ui400_boxcursor03",
+    "ui400_yazi01",
+    "ui400_item_s00",
+    "ui400_mozi00",
+    "ui400_suji00",
+    "ui400_suji01"
+   ],
+   "sets list": [
+    "ui417_shadow00",
+    "ui417_myset_tab00",
+    "ui417_myset_tab01",
+    "ui417_myset_tab02",
+    "ui417_myset_tab10",
+    "ui417_shadow01",
+    "ui417_myset_tab20",
+    "ui417_myset_tab21",
+    "ui417_myset_tab22",
+    "ui417_myset_tab23",
+    "ui417_myset_tab24",
+    "ui417_m_panel",
+    "ui417_p_cursor"
+   ],
+   "set details": [
+    "ui031_shitawaku00",
+    "ui031_soubi00",
+    "ui031_hatudo00",
+    "ui031_antivirus"
+   ],
+   "set status": [
+    "ui031_status01"
+   ],
+   "felyne clothes": [
+    "ui415_l_botan_5",
+    "ui415_l_botan_4",
+    "ui415_l_botan_2",
+    "ui415_l_sentaku_color",
+    "ui415_l_botan_page",
+    "ui415_l_colorscale",
+    "ui415_l_camera",
+    "ui415_l_syoki"
+   ],
+   "clothes colour": [
+    "ui415_l_botan_iro"
+   ],
+   "help panel": [
+    "ui006_help00",
+    "ui006_help01"
+   ],
+   "prompt key": [
+    "ui006_key_assign"
+   ],
+   "chat panel": [
+    "ui038_ui038",
+    "ui038_button00",
+    "ui038_shadow01",
+    "ui038_teikei_tab1",
+    "ui038_teikei_tab2",
+    "ui038_teikei_tab3",
+    "ui038_teikei_tab4",
+    "ui038_teikei_tab5",
+    "ui038_m_panel_1",
+    "ui038_m_panel_2"
+   ],
+   "kitchen buttons": [
+    "ui006_button00",
+    "ui006_button01"
+   ],
+   "fancy spit bars": [
+    "ui418_kami_nikuyaki"
+   ]
+  },
+  "scenes": [
+   {
+    "name": "palico clothes",
+    "all": [
+     "ui470_base"
+    ],
+    "any": [
+     "ui415_l_botan_5",
+     "ui415_l_botan_4",
+     "ui415_l_botan_2",
+     "ui415_l_sentaku_color",
+     "ui415_l_botan_iro",
+     "ui415_l_botan_page",
+     "ui415_l_colorscale",
+     "ui415_l_camera",
+     "ui415_l_syoki"
+    ],
+    "none": [],
+    "frames": {
+     "felyne clothes": {
+      "scale": 0.76,
+      "at": [
+       96,
+       38
+      ]
+     },
+     "clothes colour": {
+      "scale": 1,
+      "at": [
+       32.1,
+       -34.9
+      ]
+     }
+    }
+   },
+   {
+    "name": "palico set pieces",
+    "all": [
+     "ui470_base",
+     "ui417_m_panel",
+     "ui470_set00"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "sets list": {
+      "scale": 0.9,
+      "at": [
+       2.4,
+       -49.6
+      ]
+     }
+    }
+   },
+   {
+    "name": "palico sets",
+    "all": [
+     "ui470_base",
+     "ui417_m_panel"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "palico gear": {
+      "scale": 0.62,
+      "at": [
+       1.5,
+       -3.2
+      ]
+     },
+     "palico info": {
+      "scale": 0.62,
+      "at": [
+       1.5,
+       -3.2
+      ]
+     },
+     "sets list": {
+      "scale": 0.62,
+      "at": [
+       144.5,
+       -36.7
+      ]
+     },
+     "item box": {
+      "scale": 0.62,
+      "at": [
+       152,
+       -8.2
+      ]
+     }
+    }
+   },
+   {
+    "name": "palico swap",
+    "all": [
+     "ui470_base",
+     "ui400_boxwaku00"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "help panel": {
+      "scale": 0.47,
+      "at": [
+       152.2,
+       -94.2
+      ]
+     },
+     "prompt key": {
+      "scale": 0.47,
+      "at": [
+       154,
+       -101
+      ]
+     }
+    }
+   },
+   {
+    "name": "equip box",
+    "all": [
+     "ui400_boxwaku00",
+     "ui034_b_waku00"
+    ],
+    "any": [],
+    "none": [
+     "ui470_base"
+    ],
+    "frames": {
+     "prompt key": {
+      "scale": 0.47,
+      "at": [
+       100.7,
+       -70.1
+      ]
+     }
+    }
+   },
+   {
+    "name": "smithy list",
+    "all": [
+     "ui407_listwaku00",
+     "ui034_b_waku00"
+    ],
+    "any": [],
+    "none": [
+     "ui470_base",
+     "ui402_hituyo00",
+     "ui402_hituyo01"
+    ],
+    "frames": {
+     "prompt key": {
+      "scale": 0.47,
+      "at": [
+       100.7,
+       -70.1
+      ]
+     }
+    }
+   },
+   {
+    "name": "talisman",
+    "all": [
+     "ui021_listwaku00",
+     "ui034_b_waku00"
+    ],
+    "any": [],
+    "none": [
+     "ui470_base"
+    ],
+    "frames": {
+     "prompt key": {
+      "scale": 0.47,
+      "at": [
+       -49.3,
+       -70.1
+      ]
+     }
+    }
+   },
+   {
+    "name": "my set",
+    "all": [
+     "ui417_m_panel",
+     "ui031_shitawaku00"
+    ],
+    "any": [],
+    "none": [
+     "ui470_base"
+    ],
+    "frames": {
+     "sets list": {
+      "scale": 0.87,
+      "at": [
+       -0.5,
+       22.45
+      ]
+     },
+     "set details": {
+      "scale": 0.69,
+      "at": [
+       124.76,
+       -9.42
+      ]
+     },
+     "set status": {
+      "scale": 0.62,
+      "at": [
+       0.52,
+       -78.84
+      ]
+     },
+     "prompt key": {
+      "scale": 0.85,
+      "at": [
+       -0.4,
+       29.5
+      ]
+     }
+    }
+   },
+   {
+    "name": "palico gear lists",
+    "all": [
+     "ui470_base"
+    ],
+    "any": [
+     "ui470_main_waku01",
+     "ui470_regular01",
+     "ui470_soubi_naiyo",
+     "ui470_set00"
+    ],
+    "none": [],
+    "frames": {}
+   },
+   {
+    "name": "palico gear",
+    "all": [
+     "ui470_base"
+    ],
+    "any": [
+     "ui470_top",
+     "ui470_sub"
+    ],
+    "none": [],
+    "frames": {
+     "palico info": {
+      "scale": 0.8,
+      "at": [
+       240.8,
+       34.6
+      ]
+     }
+    }
+   },
+   {
+    "name": "palico with the main info",
+    "all": [
+     "ui470_base"
+    ],
+    "any": [
+     "ui471_bace",
+     "ui471_1P",
+     "ui471_23P"
+    ],
+    "none": [],
+    "frames": {
+     "palico list": {
+      "scale": 0.79,
+      "at": [
+       0.84,
+       -3.7
+      ]
+     },
+     "palico info": {
+      "scale": 0.79,
+      "at": [
+       0.84,
+       -3.7
+      ]
+     },
+     "palico status": {
+      "scale": 0.72,
+      "at": [
+       112,
+       -10
+      ]
+     },
+     "main info": {
+      "scale": 0.7,
+      "at": [
+       208.4,
+       161.4
+      ]
+     }
+    }
+   },
+   {
+    "name": "palico lists",
+    "all": [
+     "ui470_base"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "palico list": {
+      "scale": 0.83,
+      "at": [
+       0.68,
+       -1.98
+      ]
+     },
+     "palico info": {
+      "scale": 0.83,
+      "at": [
+       0.68,
+       -0.74
+      ]
+     },
+     "palico status": {
+      "scale": 0.96,
+      "at": [
+       16,
+       -14.3
+      ]
+     }
+    }
+   },
+   {
+    "name": "open-air kitchen",
+    "all": [
+     "ui419_l_top_2"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "kitchen buttons": {
+      "scale": 1,
+      "at": [
+       0,
+       400
+      ]
+     }
+    }
+   },
+   {
+    "name": "open-air kitchen order",
+    "all": [
+     "ui419_l_top_4"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "fancy spit bars": {
+      "scale": 1,
+      "at": [
+       0,
+       400
+      ]
+     }
+    }
+   },
+   {
+    "name": "hall chat",
+    "all": [
+     "ui005_kaiwa03",
+     "ui411_ticket_0"
+    ],
+    "any": [],
+    "none": [],
+    "frames": {
+     "chat panel": {
+      "scale": 1,
+      "at": [
+       193.6,
+       -66
+      ]
+     }
+    }
+   }
+  ]
+ },
+ "help_top": {
+  "group": "ui006_help00",
+  "also": [
+   "ui006_help01"
+  ],
+  "quest_scenes": [
+   1,
+   5
+  ],
+  "places": [
+   {
+    "name": "mod settings",
+    "when": [],
+    "when_flags": [
+     "mod_settings.open"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     6
+    ],
+    "quest": true
+   },
+   {
+    "name": "hunter search",
+    "when": [
+     "ui060_bg"
+    ],
+    "unless": [],
+    "shift": [
+     -104.75,
+     2
+    ],
+    "groups": {
+     "ui006_button00": [
+      -78.5,
+      2.5
+     ],
+     "ui006_button01": [
+      -78.5,
+      2.5
+     ]
+    }
+   },
+   {
+    "name": "world map and hall creation",
+    "when": [
+     "ui430_l_kyoten",
+     "ui430_l_botan",
+     "ui430_l_botan_3",
+     "ui430_l_tansaku",
+     "ui490_l_item",
+     "ui490_l_item_1",
+     "ui490_sign"
+    ],
+    "unless": [],
+    "shift": [
+     -81.8,
+     -4.4
+    ]
+   },
+   {
+    "name": "quest rewards",
+    "when": [
+     "ui209_l_housyu"
+    ],
+    "unless": [
+     "ui209_l_kantei",
+     "ui209_tougi_waku"
+    ],
+    "shift": [
+     -182,
+     12
+    ],
+    "quest": true
+   },
+   {
+    "name": "canteen",
+    "when": [
+     "ui419_l_bg"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     6
+    ],
+    "groups": {
+     "ui006_button02": [
+      -88,
+      52.6
+     ],
+     "ui006_button00": [
+      -44,
+      26.3
+     ],
+     "ui006_button01": [
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "name": "trade list",
+    "when": [
+     "ui402_hituyo01"
+    ],
+    "unless": [],
+    "shift": [
+     -185.5,
+     -80
+    ]
+   },
+   {
+    "name": "mi set",
+    "when": [
+     "ui417_m_panel"
+    ],
+    "unless": [
+     "ui470_base"
+    ],
+    "shift": [
+     0,
+     0
+    ],
+    "panel": false,
+    "groups": {
+     "ui006_key_assign": [
+      -309,
+      68
+     ]
+    }
+   },
+   {
+    "name": "wyporio",
+    "when": [
+     "ui405_l_bg"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     -45.7
+    ],
+    "groups": {
+     "ui006_button00": [
+      -351.5,
+      2.1
+     ],
+     "ui006_button01": [
+      -351.5,
+      2.1
+     ]
+    }
+   },
+   {
+    "name": "palico clothes",
+    "when": [
+     "ui415_l_botan_5",
+     "ui415_l_botan_4",
+     "ui415_l_botan_2",
+     "ui415_l_sentaku_color",
+     "ui415_l_botan_iro",
+     "ui415_l_botan_page",
+     "ui415_l_colorscale",
+     "ui415_l_syoki"
+    ],
+    "unless": [],
+    "shift": [
+     18.2,
+     10.5
+    ]
+   },
+   {
+    "name": "palico main info",
+    "when": [
+     "ui471_bace",
+     "ui471_1P",
+     "ui471_23P"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     10.5
+    ],
+    "groups": {
+     "ui006_key_assign": [
+      -309.5,
+      38.3
+     ]
+    }
+   },
+   {
+    "name": "palico",
+    "when": [
+     "ui470_base"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     10.5
+    ],
+    "groups": {
+     "ui006_key_assign": [
+      -113.5,
+      65.7
+     ]
+    }
+   },
+   {
+    "name": "palico info",
+    "when": [
+     "ui035_otomo_stu_comment"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     10.5
+    ],
+    "groups": {
+     "ui006_key_assign": [
+      -309.5,
+      38.3
+     ]
+    }
+   },
+   {
+    "name": "guild card",
+    "when": [
+     "ui502_bg",
+     "ui503_BG"
+    ],
+    "unless": [],
+    "shift": [
+     -81.8,
+     -186.2
+    ]
+   },
+   {
+    "name": "friends",
+    "when": [
+     "ui020_subwaku00"
+    ],
+    "unless": [],
+    "shift": [
+     -182,
+     -186.2
+    ]
+   },
+   {
+    "name": "box with panels",
+    "when": [
+     "ui034_b_waku00"
+    ],
+    "unless": [
+     "ui008_shitawaku00",
+     "ui418_kami_o",
+     "ui021_nouhin",
+     "ui022_subwaku01",
+     "ui027_subwaku00",
+     "ui028_listwaku00",
+     "ui033_soubi01",
+     "ui060_bg",
+     "ui501_bg",
+     "ui502_bg",
+     "ui503_BG",
+     "ui504_BG",
+     "ui511_BG",
+     "ui530_l_bg",
+     "ui031_shitawaku00",
+     "ui031_skill_syosai",
+     "ui031_status01",
+     "ui035_viewer",
+     "ui038_shadow01",
+     "ui402_hituyo00",
+     "ui402_hituyo01",
+     "ui404_l_jyoutai",
+     "ui404_l_list",
+     "ui404_l_nouhin",
+     "ui404_l_shijyou",
+     "ui404_l_syousai",
+     "ui404_l_uketoribox",
+     "ui406_subwaku02",
+     "ui406_subwaku03",
+     "ui412_hatudo01",
+     "ui412_shitawaku00",
+     "ui416_now",
+     "ui416_s_waku01",
+     "ui435_l_waku",
+     "ui440_listwaku00_000",
+     "ui450_point",
+     "ui491_mushiwaku00",
+     "ui505_card",
+     "ui510_otomo_info",
+     "ui470_base",
+     "ui400_subwaku00"
+    ],
+    "shift": [
+     0,
+     0
+    ],
+    "panel": false,
+    "groups": {
+     "ui006_key_assign": [
+      0,
+      0
+     ]
+    }
+   },
+   {
+    "name": "wyceum",
+    "when": [
+     "ui456_l_kami"
+    ],
+    "unless": [],
+    "shift": [
+     0,
+     6
+    ],
+    "groups": {
+     "ui006_button00": [
+      -258,
+      26.25
+     ],
+     "ui006_button01": [
+      -214,
+      0
+     ]
+    }
+   },
+   {
+    "name": "right strip",
+    "when": [],
+    "unless": [
+     "ui008_shitawaku00",
+     "ui021_listwaku00",
+     "ui418_kami_o",
+     "ui021_nouhin",
+     "ui022_subwaku01",
+     "ui027_subwaku00",
+     "ui028_listwaku00",
+     "ui033_soubi01",
+     "ui060_bg",
+     "ui501_bg",
+     "ui502_bg",
+     "ui503_BG",
+     "ui504_BG",
+     "ui511_BG",
+     "ui530_l_bg",
+     "ui031_shitawaku00",
+     "ui031_skill_syosai",
+     "ui031_status01",
+     "ui034_kyouka",
+     "ui035_viewer",
+     "ui038_shadow01",
+     "ui041_kyouka",
+     "ui400_boxwaku00",
+     "ui402_hituyo00",
+     "ui402_hituyo01",
+     "ui404_l_jyoutai",
+     "ui404_l_list",
+     "ui404_l_nouhin",
+     "ui404_l_shijyou",
+     "ui404_l_syousai",
+     "ui404_l_uketoribox",
+     "ui406_subwaku02",
+     "ui406_subwaku03",
+     "ui407_listwaku00",
+     "ui412_hatudo01",
+     "ui412_shitawaku00",
+     "ui416_now",
+     "ui416_s_waku01",
+     "ui435_l_waku",
+     "ui440_listwaku00_000",
+     "ui450_point",
+     "ui491_mushiwaku00",
+     "ui505_card",
+     "ui510_otomo_info"
+    ],
+    "unless_flags": [
+     "screens_open"
+    ],
+    "shift": [
+     0,
+     6
+    ]
+   },
+   {
+    "name": "left strip",
+    "when": [],
+    "unless": [
+     "ui008_shitawaku00",
+     "ui021_nouhin",
+     "ui022_subwaku01",
+     "ui027_subwaku00",
+     "ui028_listwaku00",
+     "ui030_sub_waku00",
+     "ui060_bg",
+     "ui501_bg",
+     "ui502_bg",
+     "ui503_BG",
+     "ui504_BG",
+     "ui511_BG",
+     "ui530_l_bg",
+     "ui031_skill_syosai",
+     "ui031_status01",
+     "ui034_kyouka",
+     "ui034_model_waku",
+     "ui035_viewer",
+     "ui036_yazi00",
+     "ui038_shadow01",
+     "ui041_kyouka",
+     "ui041_model_waku",
+     "ui402_hituyo00",
+     "ui402_hituyo01",
+     "ui404_l_jyoutai",
+     "ui404_l_list",
+     "ui404_l_nouhin",
+     "ui404_l_shijyou",
+     "ui404_l_syousai",
+     "ui404_subwaku01",
+     "ui406_subwaku03",
+     "ui412_hatudo01",
+     "ui416_s_waku01",
+     "ui440_listwaku00_000",
+     "ui491_mushiwaku00",
+     "ui505_message",
+     "ui510_otomo_info"
+    ],
+    "unless_flags": [
+     "screens_open"
+    ],
+    "shift": [
+     -182,
+     6
+    ]
+   }
+  ],
+  "stay_bottom": [
+   "ui803_bg",
+   "ui005_kaiwa00",
+   "ui005_kaiwa01",
+   "ui005_kaiwa02",
+   "ui005_kaiwa03",
+   "ui005_kaiwa04",
+   "ui474_base00",
+   "ui470_regular01",
+   "ui470_soubi_naiyo",
+   "ui470_set00",
+   "ui560_l_kami",
+   "ui011_l_bg",
+   "ui497_ui497",
+   "ui202_tairyoku"
+  ]
+ },
+ "prompt_stay_bottom": [
+  "ui006_cross"
+ ]
+}

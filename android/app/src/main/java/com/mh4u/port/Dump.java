@@ -14,6 +14,9 @@ import java.nio.charset.StandardCharsets;
  */
 final class Dump {
     static final long USA = 0x00126300L, EUR = 0x00126100L;
+    // Monster Hunter 4G (Japan, mh4n config/versions.json's jpn_mh4g): recognized, to say why it can't be used yet (its
+    // code has no address map: the tools can't make its library)
+    static final long MH4G = 0x0011D700L;
 
     static final class Ncch {
         long base, programId, exefsOffset, exefsSize, romfsOffset, romfsSize, ciaTitleId;
@@ -178,8 +181,10 @@ final class Dump {
         try (RandomAccessFile f = new RandomAccessFile(file, "r")) {
             Ncch n = find(f);
             long id = n.programId;
-            if ((id >>> 32) == 0x00040000L && ((id & 0xFFFFFFFFL) == USA || (id & 0xFFFFFFFFL) == EUR)) return "game";
-            if ((id >>> 32) == 0x0004000EL && ((id & 0xFFFFFFFFL) == USA || (id & 0xFFFFFFFFL) == EUR)) return "update";
+            long unique = id & 0xFFFFFFFFL;
+            boolean ours = unique == USA || unique == EUR || unique == MH4G;
+            if ((id >>> 32) == 0x00040000L && ours) return "game";
+            if ((id >>> 32) == 0x0004000EL && ours) return "update";
         } catch (Exception ignored) {
         }
         return null;
@@ -193,6 +198,13 @@ final class Dump {
                 throw new Problem(t("El juego o su actualización están cifrados: tienen que ser copias descifradas, las tuyas.",
                                     "The game or its update is encrypted: they have to be decrypted copies of your own."));
             long gid = game.programId, uid = patch.programId;
+            if ((gid & 0xFFFFFFFFL) == MH4G || (uid & 0xFFFFFFFFL) == MH4G)
+                throw new Problem(t("Esto es Monster Hunter 4G (Japón). El port todavía no lo corre: su código es distinto del de "
+                                    + "MH4U y las herramientas aún no tienen sus direcciones, así que no pueden hacer su librería. "
+                                    + "Usa MH4U (América o Europa) con su actualización.",
+                                    "This is Monster Hunter 4G (Japan). The port doesn't run it yet: its code differs from MH4U's "
+                                    + "and the tools don't have its addresses yet, so they can't make its library. Use MH4U "
+                                    + "(America or Europe) with its update."));
             if ((gid >>> 32) != 0x00040000L || ((gid & 0xFFFFFFFFL) != USA && (gid & 0xFFFFFFFFL) != EUR))
                 throw new Problem(t("El juego no es Monster Hunter 4 Ultimate.", "The game is not Monster Hunter 4 Ultimate."));
             if ((uid >>> 32) != 0x0004000EL)

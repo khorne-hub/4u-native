@@ -121,6 +121,29 @@ TEST_CASE("a cheats file: names, comments, the enabled marker, lines that are no
     CHECK(cheats[1]->InvalidLines() == 1);
 }
 
+TEST_CASE("the community's ways of writing a file: tabs, words together, comments, notes, a UTF-8 mark") {
+    const auto cheats = GatewayCheat::Parse(
+        "\xEF\xBB\xBF[First] // by someone\n"
+        "{Hold L + R}\n"
+        "# a comment of the list\n"
+        "00100000\t0001869F\n"
+        "10100004    00001234   // the second word\n"
+        "D3000000000000AB\n"
+        "D2000000 00000000 ; the end\n"
+        "20100008 0000002A garbage\n"
+        "// the last line\n");
+    REQUIRE(cheats.size() == 1);
+    CHECK(cheats[0]->GetName() == "First");
+    CHECK(cheats[0]->GetComments() == "Hold L + R\na comment of the list\nthe last line\n");
+    CHECK(cheats[0]->GetCode() ==
+          "00100000 0001869F\n10100004 00001234\nD3000000 000000AB\nD2000000 00000000\n20100008 0000002A garbage\n");
+    CHECK(cheats[0]->InvalidLines() == 1);  // (text after the words that is no comment: still no code)
+    FakeTarget t;
+    cheats[0]->Execute(t);
+    CHECK(t.Read32(0x00100000) == 0x0001869F);
+    CHECK(t.Read16(0x00100004) == 0x1234);
+}
+
 TEST_CASE("ToString writes the file's text back, with the marker only when on") {
     auto cheat = One("[A]\n*a note\n00100000 00000001\n");
     CHECK(cheat->ToString() == "[A]\n*a note\n00100000 00000001\n\n");
@@ -222,6 +245,74 @@ TEST_CASE("TouchesCode: writes into a range, followed through set offsets, not t
     CHECK(One("[a]\nD3000000 00100000\n00000010 00000000\n")->TouchesCode(0x00100000, 0x00200000));
     CHECK_FALSE(One("[a]\nB0300000 00000000\n00000010 00000000\n")->TouchesCode(0x00100000, 0x00200000));
     CHECK(One("[a]\nE01FFFFE 00000004\n00000000 00000000\n")->TouchesCode(0x00100000, 0x00200000));
+}
+
+TEST_CASE("CodeWrites: a cheat's constant writes into the code, and the ones that can't be told before it runs") {
+    const u32 begin = 0x00100000, end = 0x00200000;
+    std::map<u32, u8> bytes;
+    std::string why;
+    // two writes into the code (one through D3), a byte, a patch of 6 bytes, and a write outside it (data: left out)
+    auto cheat = One("[Code]\n"
+                     "00110000 E3A00001\n"
+                     "D3000000 00100000\n"
+                     "10020000 0000BEEF\n"
+                     "D2000000 00000000\n"
+                     "20120000 0000007F\n"
+                     "E0130000 00000006\n"
+                     "11223344 55667788\n"
+                     "00300000 00000001\n");
+    REQUIRE(cheat->CodeWrites(begin, end, &bytes, &why));
+    CHECK(bytes.size() == 12);  // (4 + 2 + the byte over the half-word's first + 6)
+    CHECK(bytes[0x110003] == 0xE3);
+    CHECK(bytes[0x120000] == 0x7F);  // (the byte write after the half-word: the later one)
+    CHECK(bytes[0x120001] == 0xBE);
+    CHECK(bytes[0x130003] == 0x11);
+    CHECK(bytes[0x130005] == 0x77);
+    CHECK(bytes.count(0x130006) == 0);
+    CHECK(bytes.count(0x300000) == 0);
+
+    bytes.clear();
+    CHECK_FALSE(One("[Held]\nDD000000 00000003\n00110000 E3A00001\nD0000000 00000000\n")->CodeWrites(begin, end, &bytes, &why));
+    CHECK(why == "conditional");
+    // after the condition's end (D2), a write runs again whatever happens
+    bytes.clear();
+    CHECK(One("[After]\n50300000 00000001\n00300004 00000002\nD2000000 00000000\n00110000 E3A00001\n")
+              ->CodeWrites(begin, end, &bytes, &why));
+    CHECK(bytes.size() == 4);
+    bytes.clear();
+    // (after B the address is the offset read plus the line's: one that may land in the code can't be told)
+    CHECK_FALSE(One("[Pointer]\nB0300000 00000000\n00110000 E3A00001\n")->CodeWrites(begin, end, &bytes, &why));
+    CHECK(why == "loaded_offset");
+    bytes.clear();
+    CHECK_FALSE(One("[Data]\n00300000 00000001\n")->CodeWrites(begin, end, &bytes, &why));
+    CHECK(why == "none");
+}
+
+TEST_CASE("CodePatch: the engine's cheat as an IPS patch of the code, offsets from the code's start") {
+    const auto dir = stdfs::temp_directory_path() / ("mh4n_cheats_ips_" + std::to_string(::getpid()));
+    stdfs::create_directories(dir);
+    const std::string path = (dir / "cheats.txt").string();
+    {
+        std::ofstream f(path, std::ios::binary);
+        f << "[Code]\n00110000 E3A00001\n00110004 E12FFF1E\n00120000 00000000\n[Held]\nDD000000 00000001\n00110000 E3A00001\n";
+    }
+    CheatEngine engine(path);
+    REQUIRE(engine.Load() == 2);
+    std::vector<u8> ips;
+    std::string why;
+    CHECK_FALSE(engine.CodePatch(0, &ips, &why));
+    CHECK(why == "no_code_range");
+    engine.SetCodeRange(0x00100000, 0x00200000);
+    REQUIRE(engine.CodePatch(0, &ips, &why));
+    const std::vector<u8> want = {'P', 'A', 'T', 'C', 'H',
+                                  0x01, 0x00, 0x00, 0x00, 0x08, 0x01, 0x00, 0xA0, 0xE3, 0x1E, 0xFF, 0x2F, 0xE1,
+                                  0x02, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00,
+                                  'E', 'O', 'F'};
+    CHECK(ips == want);
+    CHECK_FALSE(engine.CodePatch(1, &ips, &why));
+    CHECK(why == "conditional");
+    std::error_code ec;
+    stdfs::remove_all(dir, ec);
 }
 
 TEST_CASE("the engine: load, turn on, run, save; import replaces by name and leaves everything it brings off") {

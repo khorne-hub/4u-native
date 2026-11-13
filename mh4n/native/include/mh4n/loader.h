@@ -157,6 +157,13 @@ constexpr u32 LinearHeapAreaForKernelVersion(u32 kernel_version) {
     return kernel_version < kNewLinearHeapKernelVersion ? kLinearHeapVaddr : kNewLinearHeapVaddr;
 }
 
+// A code mod's exheader.bin that takes the place of the game's (D72; code_patch::ExheaderOverrideOf): the same
+// program (an update's id counting as the base game's), its .text, .rodata and .data where the game has them, and
+// `code_size`, the code it is loaded with, as big as its segments. Their sizes may differ from the game's: a mod made
+// from another version of the code (Heavenfall's web installer builds on v1.0) or one whose .data grows over the
+// .bss and past it (Heavenfall's extension). False with a message for the player in *error.
+bool CheckExheaderOverride(const ExHeader& game, const ExHeader& mod, std::size_t code_size, std::string* error);
+
 // Multi-line text for --print-process: the image fields and the segment map.
 std::string DescribeProcessImage(const ProcessImage& image);
 
@@ -167,7 +174,8 @@ public:
     static std::unique_ptr<Loader> OpenGameFolder(const std::string& dir, std::string* error);
     // The same with the code mods of <load_dir>mods/ applied to the code (code_patch, N3-09): Azahar's
     // <base program id>/ folder and every other mod that is on, in load order (mods/mod_list.h): a
-    // replacement code.bin, then code.ips / code.bps, as Azahar does. An empty load_dir applies none.
+    // replacement code.bin, then code.ips / code.bps, as Azahar does, and the exheader.bin of the last of
+    // them that has one in place of the game's (D72; CheckExheaderOverride). An empty load_dir applies none.
     static std::unique_ptr<Loader> OpenGameFolder(const std::string& dir, const std::string& load_dir,
                                                   std::string* error);
     // The same from the two files' contents. `code` is the decompressed .code.

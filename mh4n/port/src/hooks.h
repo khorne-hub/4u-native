@@ -34,7 +34,7 @@ void SetWindowSize(std::uint32_t width, std::uint32_t height);
 /// menu). Only options that the hooks read as the game runs can change: fps, refresh_rate,
 /// dither, render_flags_set, render_flags_clear, kick, target, skip, skip_panel, skip_hint,
 /// touch_overlay, quest_overlay, target_overlay (these redo the screen layout at once),
-/// hud_edges, the screen filters (bloom, motion_blur, depth_of_field, radial_blur, haze) and
+/// hud_edges, single_screen, the screen filters (bloom, motion_blur, depth_of_field, radial_blur, haze) and
 /// the trace_* options. Call it on the emulation thread. Returns false for any other key.
 bool SetOption(const std::string& key, const std::string& value);
 

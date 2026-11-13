@@ -372,8 +372,62 @@ void perf_mem_report(void) {
     fprintf(stderr, "[mem] at the error: %ld map entries, resident %ld MB\n", maps, rss / 1024);
 }
 
+// The kinds of the process's map entries (/proc/self/maps' last field: a file, a device, "[anon:...]", or nothing for plain
+// anonymous memory), the `n` most numerous into `out` ("58000 /dev/pvrsrvkm, 2100 (anonymous), ..."): the next log of a
+// phone whose entries keep growing names what grows.
+#define MAP_KINDS 96
+static void map_kinds(char *out, size_t size, int n) {
+    struct { char name[48]; long count; } kinds[MAP_KINDS];
+    int nk = 0;
+    long other = 0;
+    out[0] = 0;
+    FILE *f = fopen("/proc/self/maps", "re");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof line, f)) {
+        if (!strchr(line, '\n')) {  // (a longer line: the rest of it skipped)
+            int c;
+            while ((c = fgetc(f)) != EOF && c != '\n') {}
+        }
+        // address perms offset dev inode [name]: the name begins after the fifth field
+        char *p = line;
+        for (int field = 0; field < 5 && *p; field++) {
+            while (*p && *p != ' ') p++;
+            while (*p == ' ') p++;
+        }
+        char name[48];
+        size_t len = strcspn(p, "\n");
+        if (len == 0) snprintf(name, sizeof name, "(anonymous)");
+        else snprintf(name, sizeof name, "%.*s", (int)(len < sizeof name - 1 ? len : sizeof name - 1), p);
+        int i = 0;
+        while (i < nk && strcmp(kinds[i].name, name) != 0) i++;
+        if (i == nk) {
+            if (nk == MAP_KINDS) { other++; continue; }
+            snprintf(kinds[nk].name, sizeof kinds[nk].name, "%s", name);
+            kinds[nk++].count = 0;
+        }
+        kinds[i].count++;
+    }
+    fclose(f);
+    size_t used = 0;
+    for (int k = 0; k < n; k++) {
+        int best = -1;
+        for (int i = 0; i < nk; i++)
+            if (kinds[i].count > 0 && (best < 0 || kinds[i].count > kinds[best].count)) best = i;
+        if (best < 0) break;
+        used += (size_t)snprintf(out + used, used < size ? size - used : 0, "%s%ld %s", k ? ", " : "", kinds[best].count,
+                                 kinds[best].name);
+        kinds[best].count = 0;
+        if (used >= size) break;
+    }
+    if (other && used < size) snprintf(out + used, size - used, ", %ld of other kinds", other);
+}
+
+// (shared_screens.cpp) the screens as pixels from now on: the renderer's shared buffers and their sync files no more
+void shared_screens_stop_sharing(void);
+
 static void mem_watch(void) {
-    static long max_maps = -1, first_maps = -1, first_rss = -1;
+    static long max_maps = -1, first_maps = -1, first_rss = -1, valve = -1;
     if (max_maps < 0) {
         FILE *f = fopen("/proc/sys/vm/max_map_count", "re");
         if (f) { if (fscanf(f, "%ld", &max_maps) != 1) max_maps = 0; fclose(f); }
@@ -387,6 +441,28 @@ static void mem_watch(void) {
     if (max_maps > 0) snprintf(of, sizeof of, " of %ld", max_maps);
     LOG("[mem] %ld map entries%s (%+ld since the start), resident %ld MB (%+ld), the system's available %ld MB%s\n",
         maps, of, maps - first_maps, rss / 1024, (rss - first_rss) / 1024, avail / 1024, gpu);
+    // Entries that keep growing (a PowerVR BXM-8-256 on driver 1.15: about two a game frame, 64,000 after ten minutes, then
+    // std::bad_alloc: the process can't map more, 4u-native #31; a session elsewhere stays within a few thousand): what kind
+    // grows, and past 85 % of the most the system allows (55,700 of 65,530, a minute or two before the end) the screens go
+    // to the app as pixels from then on: the shared buffers handed over each frame and their sync files are what the MHGU
+    // port, which plays on the same GPU without closing so, never does (it presents on its own); the next minutes' lines
+    // say whether that stopped it. A last resort: the pixels cost frames (the Moto g06 at 3x, 26 FPS to 12-13).
+    // MH4U_TEST_MAPS_LIMIT=<n> (a test run): that limit, and the kinds from n / 4 entries more than at the start.
+    if (valve < 0) {
+        const char *test = getenv("MH4U_TEST_MAPS_LIMIT");
+        valve = test != NULL && atol(test) > 0 ? atol(test) : (max_maps > 0 ? max_maps : 65530) * 85 / 100;
+    }
+    if (maps - first_maps > (valve / 4 < 10000 ? valve / 4 : 10000)) {
+        char kinds[512];
+        map_kinds(kinds, sizeof kinds, 4);
+        LOG("[mem] the map entries by kind: %s\n", kinds);
+    }
+    static bool stopped;
+    if (!stopped && maps > valve && maps - first_maps > valve / 2) {
+        stopped = true;
+        LOG("[mem] %ld map entries and growing: the screens go to the app as pixels from now on\n", maps);
+        shared_screens_stop_sharing();
+    }
 }
 
 // The minute's [perf] line, after the [mem] one from the second on: the game's frames shown in that minute, the CPU time
@@ -394,8 +470,45 @@ static void mem_watch(void) {
 // three together), and the process's major page faults (pages read back from storage: memory short). A phone that runs
 // slowly whatever the settings (4u-native #43: an Adreno 610 at 7-8 FPS at 1x as at 3x) shows here which thread had no
 // time to spare - the game's (mh4u-game), the renderer's (mh4n-render), the pipeline workers' (mh4n-pipeline) - or that
-// none had (a wait: the GPU, a lock), or the memory.
+// none had (a wait: the GPU, a lock), or the memory. At its end the phone's thermal status and headroom (API 30 and 31:
+// a binder call each, once a minute on this thread) and the CPUs' clocks, slowest and fastest now: FPS that fall over a
+// long session and come back after a pause in the menu (4u-native #50, Discord "MH4U Caida de fps", two Mali-G52 MC2
+// Galaxys) is the phone slowing itself down when these drop with them, and the game when they don't.
 extern volatile uint64_t g_present_count;  // (android_main.cpp: the game's frames shown)
+
+// "; thermal status S, headroom H; CPU A-B MHz" (each part only when the phone gives it) into `out`
+static void perf_phone_state(char *out, size_t size) {
+    static AThermalManager *tm;
+    static bool tm_tried;
+    out[0] = 0;
+    if (!tm_tried) {
+        tm_tried = true;
+        pthread_once(&load_once, load);
+        if (fn.thermal_manager) tm = fn.thermal_manager();
+    }
+    int o = 0;
+    if (tm && fn.thermal_status) {
+        o += snprintf(out + o, size - (size_t)o, "; thermal status %d", fn.thermal_status(tm));
+        const float h = fn.thermal_headroom ? fn.thermal_headroom(tm, 0) : NAN;  // (1.0: throttled hard)
+        if (!isnan(h) && o < (int)size) o += snprintf(out + o, size - (size_t)o, ", headroom %.2f", h);
+    }
+    long lo = 0, hi = 0;
+    for (int cpu = 0; cpu < 16; cpu++) {
+        char path[80], buf[32];
+        snprintf(path, sizeof path, "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq", cpu);
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
+        ssize_t r = read(fd, buf, sizeof buf - 1);
+        close(fd);
+        if (r <= 0) continue;
+        buf[r] = 0;
+        const long khz = atol(buf);
+        if (khz <= 0) continue;
+        if (lo == 0 || khz < lo) lo = khz;
+        if (khz > hi) hi = khz;
+    }
+    if (hi > 0 && o < (int)size) snprintf(out + o, size - (size_t)o, "; CPU %ld-%ld MHz", lo / 1000, hi / 1000);
+}
 #define PERF_TASKS 192
 #define PERF_TOP 5
 typedef struct { int32_t tid; unsigned long long ticks; } PerfTask;
@@ -479,7 +592,9 @@ static void perf_watch(void) {
                             count, by_name[best].ticks / hz / secs);
             by_name[best].threads = 0;  // (shown)
         }
-        LOG("%s; %llu major page faults\n", line, majflt - perf_prev_majflt);
+        char phone[96];
+        perf_phone_state(phone, sizeof phone);
+        LOG("%s; %llu major page faults%s\n", line, majflt - perf_prev_majflt, phone);
     }
     memcpy(perf_prev, now_tasks, sizeof(PerfTask) * (size_t)n);
     perf_prev_n = n;

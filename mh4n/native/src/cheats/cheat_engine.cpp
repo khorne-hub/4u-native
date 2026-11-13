@@ -7,6 +7,8 @@
 // Copyright 2018-2025 Citra Emulator Project / Azahar Emulator Project (cheats.h)
 #include "cheats/cheat_engine.h"
 
+#include <map>
+
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
@@ -183,6 +185,45 @@ int CheatEngine::Import(const std::string& path, std::string* error) {
     }
     Changed();
     return static_cast<int>(incoming.size());
+}
+
+bool CheatEngine::CodePatch(std::size_t index, std::vector<u8>* ips, std::string* why) const {
+    const u32 begin = code_begin_.load(), end = code_end_.load();
+    if (end <= begin) {
+        if (why) *why = "no_code_range";
+        return false;
+    }
+    std::map<u32, u8> bytes;
+    {
+        std::shared_lock lock{cheats_list_mutex_};
+        if (index >= cheats_list_.size()) {
+            if (why) *why = "none";
+            return false;
+        }
+        if (!cheats_list_[index]->CodeWrites(begin, end, &bytes, why)) return false;
+    }
+    // IPS: "PATCH", then records of a 3-byte offset, a 2-byte size and the bytes, then "EOF" (an offset of 0x454F46
+    // would read as the end: such a record can't be written)
+    ips->assign({'P', 'A', 'T', 'C', 'H'});
+    for (auto it = bytes.begin(); it != bytes.end();) {
+        const u32 start = it->first;
+        std::vector<u8> run;
+        u32 next = start;
+        while (it != bytes.end() && it->first == next && run.size() < 0xFFFF) {
+            run.push_back(it->second);
+            ++it, ++next;
+        }
+        const u32 off = start - begin;
+        if (off == 0x454F46) {
+            if (why) *why = "ips_eof";
+            return false;
+        }
+        ips->insert(ips->end(), {static_cast<u8>(off >> 16), static_cast<u8>(off >> 8), static_cast<u8>(off),
+                                 static_cast<u8>(run.size() >> 8), static_cast<u8>(run.size())});
+        ips->insert(ips->end(), run.begin(), run.end());
+    }
+    ips->insert(ips->end(), {'E', 'O', 'F'});
+    return true;
 }
 
 void CheatEngine::SetCodeRange(u32 begin, u32 end) {

@@ -23,8 +23,15 @@ void content_init(const std::string& user_dir);
 // asset's: each [Name] block the file doesn't have yet is added. Before the game starts (its cheats load then).
 void content_add_port_cheats(const std::string& text);
 const std::string& content_user_dir();
-// The game's title, whose cheats file and mods these are.
+// The game's title, whose cheats file and mods these are: the USA game's unless the game folder says otherwise.
 constexpr unsigned long long kContentTitle = 0x0004000000126300ull;
+// S51: the game's title from a game folder's exheader.bin (its program id; an update's counts as the base game's): USA
+// 0004000000126300, EUR 0004000000126100; kContentTitle when it can't be read. The runtime names the mods folder and
+// the cheats file by it, so the Mods and Cheats pages must too.
+unsigned long long content_title_of(const std::string& game_folder);
+// android_main.cpp: the game folder of this run, before the pages are used; content_title() is then its title.
+void content_set_game(const std::string& game_folder);
+unsigned long long content_title();
 
 // ---- cheats ---------------------------------------------------------------------------------------------------
 struct ContentCheat {
@@ -40,6 +47,12 @@ bool content_cheats_apply(const std::vector<char>& on, std::string* error);
 bool content_cheat_remove(size_t index);
 // Import cheats: the phone's file picker (ImportActivity); its outcome comes once, through content_cheats_import_result.
 void content_cheats_import();
+// A cheat that writes into the game's code (touches_code), which this port runs recompiled: its writes made a code mod,
+// load/mods/<name>/exefs/code.ips ("Cheat - <its name>"), off in the load order until the code library is made with it
+// on (then the cheat's change is in the game's code). The same cheat again replaces its mod, keeping its place and
+// state. False and *error: CheatEngine::CodePatch's reasons (conditional, loaded_offset, register, none,
+// no_code_range, ips_eof), not_started, unwritable.
+bool content_cheat_to_code_mod(size_t index, std::string* name, std::string* error);
 struct ContentImport {
     bool done = false, ok = false;
     std::string name;    // the file or the mod imported
@@ -53,6 +66,9 @@ ContentImport content_cheats_import_result();
 // ---- mods -----------------------------------------------------------------------------------------------------
 std::vector<mh4n::mods::Mod> content_mods();
 bool content_mods_save(const std::vector<mh4n::mods::Mod>& list, std::string* error);
+// The mods the app found in the game folder's mods only by 1.0's search (further down, the game's own folders) and added
+// off (load/mods/.found_off, GameFolderActivity.syncMods): the Mods page says so until its list is saved
+std::vector<std::string> content_mods_found_off();
 // Deletes a mod's folder. False for one copied from the game folder (it comes back at the next start) or on an error.
 bool content_mod_remove(const std::string& name);
 // Add a mod: the picker for its .zip (folder false) or its folder (true).
@@ -74,6 +90,11 @@ struct ContentModScan {
     std::atomic<bool> done{false};
 };
 std::shared_ptr<ContentModScan> content_mods_scan(const std::vector<mh4n::mods::Mod>& list);
+
+// The code mods of `list` that are on and don't go together (mh4n mods::CodeConflicts: Heavenfall's code.bin with another
+// mod's code.ips, two code replacements, an exheader.bin with another mod's code, two patches over the same bytes). Read
+// from the mods' files (their names and small patches, not the code): kept for the same set of code mods and files.
+std::vector<mh4n::mods::CodeConflict> content_code_conflicts(const std::vector<mh4n::mods::Mod>& list);
 
 // Would the code library the game runs take the game's code with the code mods of `list` that are on? Worked out on a
 // thread of its own: `busy` until then; the answer is kept for the same set of code mods.

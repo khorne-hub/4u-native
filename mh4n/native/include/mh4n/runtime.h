@@ -61,7 +61,7 @@ namespace mh4n {
 
 // The game's frame counter (a u32 in the game's memory): the frame watcher reads it at every safe
 // point of the scheduler. Programs that do not map this address have no frames.
-inline constexpr u32 kFrameCounterAddress = 0x010571d4;
+inline constexpr u32 kFrameCounterAddress = 0x010571d4;  // USA v1.3.0's: GameAddress() gives the running version's
 
 // The memory mode Prepare uses unless it is given one: Dev1, the mode of ELF test programs.
 inline constexpr u32 kPrepareMemoryMode = 2;
@@ -211,6 +211,7 @@ private:
     void RunFinishers();
     void ScheduleSharedPageUpdate(u64 due_tick);
     int Run(const Options& options);
+    bool CheckLibraryBuild(const CodeLibrary& library, const std::string& path);
 
     std::unique_ptr<TimeSource> time_;
     std::unique_ptr<PreemptionSource> preemption_;

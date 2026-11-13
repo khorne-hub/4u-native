@@ -39,6 +39,8 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "mh4n/types.h"
 
@@ -90,6 +92,21 @@ public:
     // The raw tables (functions, hook points, tunables). Valid while the library is loaded.
     const RCodeInfo& Info() const { return *info_; }
 
+    // What the library says of the game version it was made for (tools/game_version.py's game_version.c), read at
+    // Load. A library made before it (USA v1.3.0's) says nothing: an empty version and id, no addresses.
+    // config/versions.json's key, such as "usa_v130", "eur_v110" or "usa_v010".
+    const std::string& GameVersion() const { return game_version_; }
+    // The id of the tools that made it (tools/build_game.py's code_library_id, the .id file's beside it).
+    const std::string& LibraryId() const { return library_id_; }
+    // The port's addresses (config/port_addresses.txt) as (USA v1.3.0's, this version's), sorted; empty when they
+    // are USA v1.3.0's own.
+    const std::vector<std::pair<u32, u32>>& PortAddresses() const { return port_addresses_; }
+    // A code mod's code past the game's data (Heavenfall's extension) when the library was made: where, how much
+    // and its CRC-32; size 0 when there was none.
+    u32 ExtBase() const { return ext_base_; }
+    u32 ExtSize() const { return ext_size_; }
+    u32 ExtCrc32() const { return ext_crc32_; }
+
     // The recompiled function at `target`; Thumb entries have bit 0 set. nullptr if there is none.
     GuestFunction Find(u32 target) const;
     // Another symbol the library exports (such as tools/recomp/runtime/pica_native.h's table), nullptr if it has none.
@@ -108,11 +125,26 @@ public:
 
 private:
     CodeLibrary() = default;
+    void ReadGameVersion();
     std::string path_;
     bool deterministic_ = false;
     void* handle_ = nullptr;  // dlopen's handle, or the HMODULE
     std::unique_ptr<RCodeInfo> info_;
+    std::string game_version_, library_id_;
+    std::vector<std::pair<u32, u32>> port_addresses_;
+    u32 ext_base_ = 0, ext_size_ = 0, ext_crc32_ = 0;
 };
+
+// The port's addresses of the game version that runs (CodeLibrary::PortAddresses of the library the game was
+// started with; the runtime sets them when it takes the library): GameAddress turns a USA v1.3.0 address of
+// config/port_addresses.txt into the running version's. Without a table (USA v1.3.0) it is the address itself, and so
+// is an address the table doesn't have.
+void SetGameAddresses(std::vector<std::pair<u32, u32>> table);
+u32 GameAddress(u32 usa_address);
+
+// The id file beside a code library (libmh4u_code_native.so: libmh4u_code_native.id), its first word; empty when
+// there is none.
+std::string ReadLibraryIdFile(const std::string& library_path);
 
 // ---- failures and handlers --------------------------------------------------------------------
 

@@ -11,13 +11,15 @@
 set(MH4N_REPO_ROOT "${MH4N_ROOT}/..")
 set(MH4N_HOOKS_SOURCE "${MH4N_REPO_ROOT}/port/src/hooks.cpp")
 set(MH4N_KEYBOARD_SOURCE "${MH4N_REPO_ROOT}/port/src/swkbd_bridge.cpp")
+set(MH4N_ONESCREEN_SOURCE "${MH4N_REPO_ROOT}/port/src/onescreen.cpp")
 set(MH4N_PLATFORM_HEADER "${MH4N_REPO_ROOT}/port/src/platform.h")
 set(MH4N_SCHEDULE_HEADER "${MH4N_REPO_ROOT}/port/src/schedule.h")
 set(MH4N_RECOMP_RUNTIME "${MH4N_REPO_ROOT}/tools/recomp/runtime")
 
 if (EXISTS "${MH4N_HOOKS_SOURCE}" AND EXISTS "${MH4N_PLATFORM_HEADER}"
     AND EXISTS "${MH4N_SCHEDULE_HEADER}" AND EXISTS "${MH4N_RECOMP_RUNTIME}/recomp.h")
-    set(mh4n_platform_sources platform_native.cpp "${MH4N_HOOKS_SOURCE}" "${MH4N_KEYBOARD_SOURCE}")
+    set(mh4n_platform_sources platform_native.cpp "${MH4N_HOOKS_SOURCE}" "${MH4N_KEYBOARD_SOURCE}"
+        "${MH4N_ONESCREEN_SOURCE}")
     set(mh4n_platform_available ON)
 else()
     message(STATUS "mh4n_platform: port/src/hooks.cpp or recomp.h not found around native/: an empty module")

@@ -8,8 +8,10 @@
 #include <strings.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <utility>
@@ -20,6 +22,7 @@
 
 namespace {
 uint32_t g_gpu_api = 0;  // (the GPU's Vulkan version, VulkanGpuName fills it)
+uint32_t g_gpu_max_image = 0;  // (and the largest 2D image and framebuffer side it allows)
 
 void Log(const std::string& text) { std::fprintf(stderr, "[Info] App: first start: %s\n", text.c_str()); }
 
@@ -48,6 +51,8 @@ std::string VulkanGpuName() {
                 properties(devices[0], &p);
                 name = p.deviceName;
                 g_gpu_api = p.apiVersion;
+                g_gpu_max_image = std::min({p.limits.maxImageDimension2D, p.limits.maxFramebufferWidth,
+                                            p.limits.maxFramebufferHeight});
             }
         }
         if (destroy != nullptr) destroy(instance, nullptr);
@@ -142,7 +147,9 @@ void first_run_write(const std::string& ini_path, const FirstRunDevice& device) 
         << "\n"
            "# the top screen as wide as the phone's screen\nwidescreen = match\nwide_render = 1\n"
            "# the hunting HUD's sides at the screen's edges\nhud_edges = 1\n"
-           "# the kick and the target camera on ZR and ZL\nkick = ZR\ntarget = ZL\nskip = ZR\n";
+           "# the kick and the target camera on ZR and ZL\nkick = ZR\ntarget = ZL\nskip = ZR\n"
+           "# the touch screen's menus on the top screen (one screen)\nsingle_screen = "
+        << kSingleScreenDefault << "\n";
     if (device.weak) {
         ini << "# Low-end mode (this phone's first start): the screen filters and the game's anti-aliasing off\n";
         for (const char* filter : kLowEndFilters) ini << filter << " = off\n";
@@ -189,7 +196,8 @@ void first_run_fill(const std::string& ini_path) {
         }
         return false;
     };
-    static const std::pair<const char*, const char*> kDefaults[] = {{"fps", "60"}, {"widescreen", "match"}, {"kick", "ZR"}, {"target", "ZL"}};
+    static const std::pair<const char*, const char*> kDefaults[] = {{"fps", "60"}, {"widescreen", "match"}, {"kick", "ZR"}, {"target", "ZL"},
+                                                                     {"single_screen", kSingleScreenDefault}};
     std::string added;
     for (const auto& [key, value] : kDefaults) {
         if (has(key)) continue;
@@ -207,13 +215,18 @@ namespace {
 struct GpuProbe {
     std::string name;
     uint32_t api = 0;
+    uint32_t max_image = 0;
 };
 const GpuProbe& Probe() {
     static const GpuProbe probe = [] {
         GpuProbe p;
         p.name = VulkanGpuName();
         p.api = g_gpu_api;
+        p.max_image = g_gpu_max_image;
         if (const char* name = std::getenv("MH4U_GPU_NAME"); name != nullptr && *name != 0) p.name = EnvGpuName(name);
+        if (const char* max = std::getenv("MH4U_GPU_MAX_IMAGE"); max != nullptr && std::atoi(max) > 0) {
+            p.max_image = static_cast<uint32_t>(std::atoi(max));
+        }
         if (const char* api = std::getenv("MH4U_GPU_API"); api != nullptr && *api != 0) {
             unsigned major = 0, minor = 0, patch = 0;
             if (std::sscanf(api, "%u.%u.%u", &major, &minor, &patch) >= 2) p.api = VK_MAKE_API_VERSION(0, major, minor, patch);
@@ -226,11 +239,21 @@ const GpuProbe& Probe() {
 
 std::string first_run_gpu_name() { return Probe().name; }
 uint32_t first_run_gpu_api() { return Probe().api; }
+uint32_t first_run_gpu_max_image() { return Probe().max_image; }
+
+int gpu_scale_limit() {
+    const uint32_t max = Probe().max_image;
+    return max >= 1024 ? static_cast<int>(max / 1024) : 0;
+}
 
 bool adreno_fix_applies() {
     const GpuProbe& p = Probe();
     if (p.name.find("Adreno") == std::string::npos || p.api == 0) return false;
-    if (p.api >= VK_MAKE_API_VERSION(0, 1, 1, 128)) return false;
+    // (from 1.1.128 on, the Adreno GPUs seen drawing bands below 3x: the 619's 2023 driver, first_run.h)
+    static const int kBandsFrom128[] = {619};
+    const int number = NumberAfter(p.name, "adreno");
+    const bool bands = std::find(std::begin(kBandsFrom128), std::end(kBandsFrom128), number) != std::end(kBandsFrom128);
+    if (p.api >= VK_MAKE_API_VERSION(0, 1, 1, 128) && !(bands && p.api < VK_MAKE_API_VERSION(0, 1, 2, 0))) return false;
     // (a driver of the player's own, chosen for this start, is another driver: what was measured is the system's)
     return gpu_driver_status().chosen.empty();
 }

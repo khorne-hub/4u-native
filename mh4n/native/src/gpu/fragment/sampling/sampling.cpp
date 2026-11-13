@@ -354,5 +354,35 @@ rhi::Result<void> UploadRgba8(rhi::Recorder& rec, rhi::Ring& staging, rhi::Image
     return rhi::Result<void>{};
 }
 
+rhi::Result<void> UploadRgba8Rows(rhi::Recorder& rec, rhi::Ring& staging, rhi::Image& image, u32 mip, u32 layer, u32 width,
+                                  u32 height, u32 first, u32 count, std::span<const u8> rgba) {
+    const u64 row = static_cast<u64>(width) * 4;
+    const u64 size = row * count;
+    if (width == 0 || count == 0 || first + count > height || rgba.size() < row * height) {
+        return rhi::Error{"UploadRgba8Rows: the rows are out of the image"};
+    }
+    rhi::Result<rhi::RingAllocation> alloc = staging.Map(size, 16);
+    if (!alloc.ok()) {
+        return rhi::Error{alloc.error()};
+    }
+    // (the image's rows height - first - count .. height - first - 1 hold the decoder's rows first + count - 1 .. first)
+    for (u32 j = 0; j < count; ++j) {
+        std::memcpy(alloc->data.data() + j * row, rgba.data() + static_cast<u64>(first + count - 1 - j) * row, row);
+    }
+    staging.GetBuffer()->Flush(alloc->offset, size);
+    rhi::Result<void> committed = staging.Commit(size);
+    if (!committed.ok()) {
+        return committed;
+    }
+    rhi::BufferImageRegion region;
+    region.buffer_offset = alloc->offset;
+    region.mip_level = mip;
+    region.layer = layer;
+    region.image_rect = rhi::Rect{0, static_cast<s32>(height - first - count), width, count};
+    region.aspect = rhi::ImageAspect::Color;
+    rec.CopyBufferToImage(*staging.GetBuffer(), image, std::span<const rhi::BufferImageRegion>(&region, 1));
+    return rhi::Result<void>{};
+}
+
 }  // namespace sampling
 }  // namespace mh4n::gpu::fragment

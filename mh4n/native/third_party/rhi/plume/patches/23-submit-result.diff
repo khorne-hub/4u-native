@@ -1,0 +1,22 @@
+vkQueueSubmit keeps the VkResult it returned when it fails (lastSubmitResult on the queue), so the caller can tell
+a lost device (VK_ERROR_DEVICE_LOST) from a submission that went through.
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -3917,6 +3917,7 @@
+         }
+ 
+         if (res != VK_SUCCESS) {
++            lastSubmitResult = res;
+             fprintf(stderr, "vkQueueSubmit failed with error code 0x%X.\n", res);
+             return;
+         }
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -477,6 +477,7 @@
+         uint32_t queueIndex = 0;
+         std::unordered_set<VulkanSwapChain *> swapChains;
+         RenderCommandListType type = RenderCommandListType::UNKNOWN;
++        VkResult lastSubmitResult = VK_SUCCESS; // what the last failed vkQueueSubmit returned (VK_SUCCESS: none failed)
+ 
+         VulkanCommandQueue(VulkanDevice *device, RenderCommandListType type);
+         ~VulkanCommandQueue() override;

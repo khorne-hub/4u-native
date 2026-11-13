@@ -685,17 +685,36 @@ bool HostIsCaseSensitive(const stdfs::path& dir) {
 
 }  // namespace
 
-TEST_CASE("names are case sensitive: A.TXT is a new file beside a.txt") {
+TEST_CASE("a mod's name in other capitals stands for the game's: DATA/Y.ARC replaces data/y.arc") {
+    Fixture f(SampleTree());
+    WriteFile(f.romfs() / "DATA" / "Y.ARC", B("respelled"));            // the game's file, other capitals
+    WriteFile(f.romfs() / "Data" / "Sub" / "more.bin", Pattern(70, 11));  // a new file in the game's folders
+    WriteFile(f.romfs() / "NewDir" / "F.bin", Pattern(16, 12));          // new: kept as spelled
+    Tree expected = f.base;
+    expected.files["data/y.arc"] = B("respelled");
+    expected.files["data/sub/more.bin"] = Pattern(70, 11);
+    expected.files["NewDir/F.bin"] = Pattern(16, 12);
+    ExpectTree(f.Run(), expected);
+}
+
+TEST_CASE("both spellings in one mod: the game's own, read later by name order, wins") {
     Fixture f(SampleTree());
     if (!HostIsCaseSensitive(f.dir.path)) {
         MESSAGE("skipped: this host's folders ignore case, so romfs/a.txt and romfs/A.TXT cannot both exist");
         return;
     }
     WriteFile(f.romfs() / "a.txt", Pattern(200, 9));
-    WriteFile(f.romfs() / "A.TXT", B("names are case sensitive"));
+    WriteFile(f.romfs() / "A.TXT", B("the same file"));
     Tree expected = f.base;
-    expected.files["a.txt"] = Pattern(200, 9);
-    expected.files["A.TXT"] = B("names are case sensitive");
+    expected.files["a.txt"] = Pattern(200, 9);  // ("A.TXT" < "a.txt": read first, then replaced)
+    ExpectTree(f.Run(), expected);
+}
+
+TEST_CASE("patches and stubs in romfs_ext find the game's file in other capitals") {
+    Fixture f(SampleTree());
+    WriteFile(f.ext() / "DATA" / "X.ARC.stub", Bytes());
+    Tree expected = f.base;
+    expected.files.erase("data/x.arc");
     ExpectTree(f.Run(), expected);
 }
 

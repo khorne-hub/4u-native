@@ -54,17 +54,11 @@ if [ -n "$GAME" ]; then
     set -- "$@" --romfs "$GAME"
 fi
 if [ -n "$MODS" ]; then
-    # build_game.py reads the code mods as the app does, from <user dir>/load/mods/<title>: a folder made for it
-    TITLE=$(find "$MODS" -mindepth 1 -maxdepth 2 -type d \( -name 0004000000126300 -o -name 0004000E00126300 \
-            -o -name 0004000e00126300 \) | sort | head -n 1)
-    if [ -z "$TITLE" ] && [ -d "$MODS/exefs" ]; then TITLE=$MODS; fi
-    [ -n "$TITLE" ] || { echo "There is no 0004000000126300 or exefs folder in $MODS." >&2; exit 1; }
-    USER_DIR="$ROOT/build/android-mods"
-    rm -rf "$USER_DIR"
-    mkdir -p "$USER_DIR/load/mods"
-    cp -R "$TITLE" "$USER_DIR/load/mods/0004000000126300"
-    echo "With the mods of $TITLE"
-    set -- "$@" --mods "$USER_DIR"
+    # build_game.py takes the code mods of that folder as the app copies them to the phone's user folder (every mod in
+    # it, in the order the app loads them: GameFolderActivity.syncMods) and says if two of them don't go together
+    [ -d "$MODS" ] || { echo "Can't find $MODS" >&2; exit 1; }
+    echo "With the mods of $MODS"
+    set -- "$@" --game-mods "$MODS"
 else
     set -- "$@" --no-mods
 fi

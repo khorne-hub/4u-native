@@ -20,10 +20,15 @@
 //    nothing (TouchesCode tells such a cheat apart, for the app to say so);
 //  - a patch line (EXXXXXXX) that claims more bytes than its cheat has lines stops at the last line
 //    (Azahar reads past the end of its list);
-//  - nothing is logged per bad line at load (the count is), and enabling a cheat logs nothing.
+//  - nothing is logged per bad line at load (the count is), and enabling a cheat logs nothing;
+//  - the file is read as the community's lists write it, which Azahar leaves out: a code line's two words split by
+//    tabs or several spaces, or written together, with a comment after them ("// ...", "# ...", "; ..."), is read as
+//    "XXXXXXXX YYYYYYYY"; a line of "{...}" (CTRPF's notes), "# ..." or "// ..." is a comment; "[Name] text" is Name;
+//    a UTF-8 mark at the start of the file is passed over.
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -110,6 +115,12 @@ public:
     // Does a write of this cheat land in [begin, end) as far as the lines alone tell (an offset loaded
     // from memory is not followed)? The game's code there is recompiled: such a write changes nothing.
     bool TouchesCode(u32 begin, u32 end) const;
+    // Its writes into [begin, end) as bytes by address, for a code patch (the port runs the code recompiled, so a
+    // cheat's change to it only takes effect built into the code library, as a code mod): only when the lines alone
+    // tell every one of them, whatever happens while it runs - constant values (0, 1, 2, E) at offsets the lines set
+    // (D3, DC, D2), with no condition, button, loop or offset read from memory before them. False, and in *why:
+    // "conditional", "loaded_offset", "register" (a value from memory) or "none" (no write lands there).
+    bool CodeWrites(u32 begin, u32 end, std::map<u32, u8>* bytes, std::string* why) const;
 
     // The cheat as the file has it: [Name], the marker if it is on, the comments, the lines, an empty line.
     std::string ToString() const;

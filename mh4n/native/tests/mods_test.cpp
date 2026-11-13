@@ -141,3 +141,45 @@ TEST_CASE("the code mods that are on apply in load order; RomFS layers follow th
     CHECK_FALSE(bad.ok);
     CHECK(bad.error == "mods: third/exefs/code.ips: patch error");
 }
+
+TEST_CASE("an exheader.bin makes a mod a code mod; code mods that don't go together are named") {
+    TempDir user;
+    user.Write("load/mods/Heavenfall/exefs/code.bin", std::vector<u8>(16, 1));
+    user.Write("load/mods/Heavenfall/exheader.bin", std::vector<u8>(0x800, 0));
+    user.Write("load/mods/SingleScreen/exefs/code.ips", Ips(4, {1, 2}));
+    user.Write("load/mods/Tweak/code.ips", Ips(5, {3}));
+    user.Dir("load/mods/Textures/romfs");
+    user.Write("load/mods/OnlyExheader/exheader.bin", std::vector<u8>(0x800, 0));
+    user.Text("load/mods/load_order.txt", "Heavenfall\nSingleScreen\nTweak\nTextures\n# off: OnlyExheader\n");
+    auto list = mods::List(user.Folder(), kTitle);
+    REQUIRE(list.size() == 5);
+    CHECK(list[0].code);
+    CHECK(list[0].exheader);
+    CHECK(list[4].code);  // (an exheader.bin alone: still part of the code)
+    CHECK_FALSE(list[3].code);
+    const auto conflicts = mods::CodeConflicts(list);
+    using Kind = code_patch::CodeConflict::Kind;
+    const auto has = [&](Kind kind, const std::string& a, const std::string& b) {
+        for (const auto& c : conflicts) {
+            if (c.kind == kind && c.a == a && c.b == b) return true;
+        }
+        return false;
+    };
+    CHECK(has(Kind::PatchOnReplacement, "SingleScreen", "Heavenfall"));
+    CHECK(has(Kind::PatchOnReplacement, "Tweak", "Heavenfall"));
+    CHECK(has(Kind::Overlap, "Tweak", "SingleScreen"));
+    CHECK(conflicts.size() == 3);
+    // Heavenfall alone, with a mod of files: nothing
+    for (auto& m : list) m.on = m.name == "Heavenfall" || m.name == "Textures";
+    CHECK(mods::CodeConflicts(list).empty());
+    // two replacements, the exheader with the earlier one
+    user.Write("load/mods/Tweak/code.bin", std::vector<u8>(16, 2));
+    list = mods::List(user.Folder(), kTitle);
+    for (auto& m : list) m.on = m.name == "Heavenfall" || m.name == "Tweak";
+    const auto two = mods::CodeConflicts(list);
+    REQUIRE(two.size() == 2);  // (Tweak's own code.ips is on its own code: no conflict)
+    CHECK(two[0].kind == Kind::Replaced);
+    CHECK((two[0].a == "Heavenfall" && two[0].b == "Tweak"));
+    CHECK(two[1].kind == Kind::Exheader);
+    CHECK((two[1].a == "Heavenfall" && two[1].b == "Tweak"));
+}

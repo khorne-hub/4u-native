@@ -9,9 +9,13 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <initializer_list>
 #include <sstream>
 #include <vector>
+
+#include <jni.h>
 
 #include "app_settings.h"
 #include "hooks.h"
@@ -29,6 +33,10 @@ namespace {
 using u32 = std::uint32_t;
 
 constexpr u32 ZL_BIT = 1u << 14, ZR_BIT = 1u << 15;  // (the triggers, beside the 3DS's kPad bits)
+constexpr float kMouseDegPerCount = 0.08f;  // the camera's turn for a count of the mouse at MouseSensitivity 1 (MHGU's)
+constexpr float kMouseFullSpeed = 1500.0f;   // counts a second: the C-stick all the way (where the hook can't turn it)
+constexpr float kMouseSmooth = 0.025f;       // (seconds: the mouse's speed averaged over them, for the C-stick)
+constexpr Uint64 kWheelPressMs = 70;         // a wheel notch on a button's keybind: pressed this long
 constexpr Uint64 kMinPressMs = 80;
 constexpr Uint64 kChordWaitMs = 60;
 constexpr Uint64 kOpenGraceMs = 500;  // a controller just opened can't take over (one whose buttons read as held)
@@ -52,6 +60,8 @@ struct Settings {
     int r3 = R3_LOCKON;
     int town = TOWN_SELECT;
     int combo_pad[kCombos] = {};  // [Controls] Combo<n>Pad: kComboPadKeys' index (COMBO_PAD's button), 0 none
+    Keybinds binds;               // [Keybinds]
+    float mouse_sens = 1.0f;      // [Mouse] MouseSensitivity, 0.1 .. 10 (the MHGU port's)
 };
 Settings g_set;
 unsigned g_set_version = ~0u;
@@ -108,6 +118,12 @@ void read_settings() {
             if (!SDL_strcasecmp(v.c_str(), kComboPadKeys[i])) s.combo_pad[k] = i;
         if (s.combo_pad[k]) pads += ", combined button " + std::to_string(k + 1) + " on " + kComboPadKeys[s.combo_pad[k]];
     }
+    s.binds = controls_read_binds();
+    s.mouse_sens = std::clamp(std::strtof(app_setting("Mouse", "MouseSensitivity", "1.0").c_str(), nullptr), 0.1f, 10.0f);
+    if (!(s.mouse_sens >= 0.1f)) s.mouse_sens = 1.0f;  // (not a number)
+    static bool read_once = false;  // (the first read: no change to say)
+    if (read_once && !(s.binds == g_set.binds)) std::fprintf(stderr, "[Info] Controls: the keybinds changed\n");
+    read_once = true;
     g_set = s;
     std::fprintf(stderr, "[Info] Controls: face buttons by %s, right stick %s, camera %.2fx%s%s, R3 %s, dead zone %.0f%%%s\n",
                  s.label ? "label" : "position", s.cstick ? "as the C-stick" : "turns the camera", s.speed,
@@ -152,6 +168,45 @@ void gyro_off() {
     if (g_gyro_pad) SDL_SetGamepadSensorEnabled(g_gyro_pad, SDL_SENSOR_GYRO, false), g_gyro_pad = nullptr;
     if (g_gyro_on) std::fprintf(stderr, "[Info] Controls: the gyro off\n");
     g_gyro_on = false, g_gyro_ns = 0;
+}
+
+// ---- the input devices as Android lists them, in the log (GameActivity.inputReport, the MHGU port's: their sources, a
+// gamepad's keys, read as a controller or not, and the gamepad keys that came from an external device that isn't, which
+// SDL gave the game as a keyboard's). A controller that "isn't read" left no line at all when SDL never listed it as a
+// joystick (an Ipega PG-9025 Android calls "... Keyboard", gu-native #87). At the start, a second after a device comes
+// or goes (report_soon), then every 5 s only if something changed
+Uint64 g_report_next = 0;
+bool g_report_all = true;  // (the whole report: the start, a device came or went)
+void report_soon() { g_report_all = true, g_report_next = SDL_GetTicks() + 1000; }
+void input_report() {
+    static bool failed = false;
+    const Uint64 now = SDL_GetTicks();
+    if (failed || now < g_report_next) return;
+    g_report_next = now + 5000;
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto act = env ? static_cast<jobject>(SDL_GetAndroidActivity()) : nullptr;
+    if (!act) return;
+    jclass cls = env->GetObjectClass(act);
+    jmethodID m = cls ? env->GetStaticMethodID(cls, "inputReport", "(Z)Ljava/lang/String;") : nullptr;
+    jstring str = nullptr;
+    if (!env->ExceptionCheck() && m) str = static_cast<jstring>(env->CallStaticObjectMethod(cls, m, static_cast<jboolean>(g_report_all)));
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe(), env->ExceptionClear();
+        if (!m) failed = true, std::fprintf(stderr, "[input] no input report: GameActivity.inputReport is missing\n");
+        str = nullptr;
+    }
+    g_report_all = false;
+    const char* t = str ? env->GetStringUTFChars(str, nullptr) : nullptr;
+    for (const char* p = t; p && *p;) {  // (line by line, as the MHGU port's log)
+        const char* nl = std::strchr(p, '\n');
+        const int n = nl ? static_cast<int>(nl - p) : static_cast<int>(std::strlen(p));
+        std::fprintf(stderr, "%.*s\n", n, p);
+        p += n + (nl != nullptr);
+    }
+    if (t) env->ReleaseStringUTFChars(str, t);
+    if (str) env->DeleteLocalRef(str);
+    if (cls) env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(act);
 }
 
 // ---- which devices are controllers
@@ -244,14 +299,14 @@ void joystick_seen(SDL_JoystickID id) {
     told.push_back(id);
     const char* name = SDL_GetJoystickNameForID(id);
     std::fprintf(stderr, "[Info] Controls: joystick %s (%04x:%04x) has no gamepad map: not read until it is mapped "
-                         "(Controls, Map a controller)\n",
+                         "(Controls, Controller, Map a controller)\n",
                  name ? name : "?", SDL_GetJoystickVendorForID(id), SDL_GetJoystickProductForID(id));
     if (!name_is_pad(name)) return;  // (not a controller in the player's hands)
     const std::string who = name ? name : "";
     settings_panel_notice((who.empty() ? std::string("A controller") : who) +
-                              ": to use it, map it in the settings: Controls, Map a controller.",
+                              ": to use it, map it in the settings: Controls, Controller, Map a controller.",
                           (who.empty() ? std::string("Un mando") : who) +
-                              ": para usarlo, mapéalo en las opciones: Controles, Mapear un mando.");
+                              ": para usarlo, mapéalo en las opciones: Controles, Mando, Mapear un mando.");
 }
 
 void scan() {
@@ -319,30 +374,41 @@ u32 pad_held(SDL_Gamepad* p) {
     return b;
 }
 
-// The keyboard (MHGU's keys where it has them, and the camera on I J K L)
-u32 key_bit(SDL_Scancode k) {
-    switch (k) {
-    case SDL_SCANCODE_O:
-    case SDL_SCANCODE_F: return mh4n::kPadA;
-    case SDL_SCANCODE_SPACE:
-    case SDL_SCANCODE_ESCAPE: return mh4n::kPadB;
-    case SDL_SCANCODE_U:
-    case SDL_SCANCODE_X: return mh4n::kPadX;
-    case SDL_SCANCODE_R:
-    case SDL_SCANCODE_Y: return mh4n::kPadY;
-    case SDL_SCANCODE_Q: return mh4n::kPadL;
-    case SDL_SCANCODE_E: return mh4n::kPadR;
-    case SDL_SCANCODE_TAB: return ZL_BIT;
-    case SDL_SCANCODE_T: return ZR_BIT;
-    case SDL_SCANCODE_RETURN:
-    case SDL_SCANCODE_KP_ENTER: return mh4n::kPadStart;
-    case SDL_SCANCODE_BACKSPACE: return mh4n::kPadSelect;
-    case SDL_SCANCODE_UP: return mh4n::kPadUp;
-    case SDL_SCANCODE_DOWN: return mh4n::kPadDown;
-    case SDL_SCANCODE_LEFT: return mh4n::kPadLeft;
-    case SDL_SCANCODE_RIGHT: return mh4n::kPadRight;
-    default: return 0;
+// ---- the keyboard and the mouse ([Keybinds], controls.h): the game's buttons each keybind presses (0: a stick's direction
+// or Walk, the item bar, a stick's click, a combined button's: their own ways below)
+const u32 BIND_BITS[BINDS] = {
+    0, 0, 0, 0, 0, 0, 0, 0, 0, mh4n::kPadA, mh4n::kPadB, mh4n::kPadX, mh4n::kPadY, mh4n::kPadL, mh4n::kPadR, ZL_BIT, ZR_BIT,
+    mh4n::kPadStart, mh4n::kPadSelect, mh4n::kPadUp, mh4n::kPadDown, mh4n::kPadLeft, mh4n::kPadRight};
+u32 g_mouse_held = 0;            // the mouse's buttons held (bit: SDL_BUTTON_*), while it is captured
+Uint64 g_wheel_until[2] = {};    // a notch up, down on a button's keybind: pressed until then (SDL_GetTicks)
+bool code_held(int code) {
+    if (code > 0 && code < SDL_SCANCODE_COUNT) return g_keys[code];
+    if (code > kKeyMouse && code <= kKeyMouse + SDL_BUTTON_X2) return (g_mouse_held >> (code - kKeyMouse) & 1) != 0;
+    if (code == kKeyWheelUp || code == kKeyWheelDown) return SDL_GetTicks() < g_wheel_until[code - kKeyWheelUp];
+    return false;
+}
+bool bind_held(int b) {
+    for (int k = 0; k < kBindKeys; k++)
+        if (g_set.binds.keys[b][k] && code_held(g_set.binds.keys[b][k])) return true;
+    return false;
+}
+bool bind_has(int b, int code) {
+    for (int k = 0; k < kBindKeys; k++)
+        if (g_set.binds.keys[b][k] == code) return true;
+    return false;
+}
+// the right stick's click's buttons, as a controller's ([Controls] R3: the lock-on is no button, code_down)
+u32 rstick_bits() { return g_set.r3 == R3_L ? mh4n::kPadL : g_set.r3 == R3_ZL ? ZL_BIT : g_set.r3 == R3_ZR ? ZR_BIT : 0; }
+// what a key or a mouse button presses (several keybinds may share it)
+u32 code_bits(int code) {
+    u32 b = 0;
+    for (int i = 0; i < BINDS; i++) {
+        if (!bind_has(i, code)) continue;
+        if (BIND_BITS[i]) b |= BIND_BITS[i];
+        else if (i == BIND_RSTICK) b |= rstick_bits();
+        else if (i >= BIND_COMBO1) b |= touch_combo_buttons(i - BIND_COMBO1);
     }
+    return b;
 }
 
 // The keyboard types into a text (the settings' keyboard, the game's text on the phone's keyboard): its keys are not the
@@ -354,8 +420,12 @@ bool typing() {
 
 u32 keys_held() {
     u32 b = 0;
-    for (int k = 0; k < SDL_SCANCODE_COUNT; k++)
-        if (g_keys[k]) b |= key_bit(static_cast<SDL_Scancode>(k));
+    for (int i = 0; i < BINDS; i++) {
+        if (!bind_held(i)) continue;
+        if (BIND_BITS[i]) b |= BIND_BITS[i];
+        else if (i == BIND_RSTICK) b |= rstick_bits();
+        else if (i >= BIND_COMBO1) b |= touch_combo_buttons(i - BIND_COMBO1);
+    }
     return b;
 }
 
@@ -409,8 +479,8 @@ std::int16_t units(float v) {
     return static_cast<std::int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * kCircle));
 }
 
-Vec keys_stick(SDL_Scancode up, SDL_Scancode down, SDL_Scancode left, SDL_Scancode right, bool walk) {
-    Vec v{static_cast<float>(g_keys[right] - g_keys[left]), static_cast<float>(g_keys[up] - g_keys[down])};
+Vec keys_stick(int up, int down, int left, int right, bool walk) {  // (BIND_*: a stick's four directions)
+    Vec v{static_cast<float>(bind_held(right) - bind_held(left)), static_cast<float>(bind_held(up) - bind_held(down))};
     float k = walk ? kWalk : 1.0f;
     if (v.x != 0 && v.y != 0) k *= .7071f;  // (diagonals as long as the rest)
     return {v.x * k, v.y * k};
@@ -530,6 +600,222 @@ void script_input(u32 frame, ControlsInput& out) {
     }
 }
 
+
+// ---- a keyboard with letters and a mouse connected (GameActivity.keyboardMouse, the MHGU port's): asked at the start,
+// soon after a keyboard or a mouse comes or goes (kbm_soon) and every 2 s
+int g_kbm = 0;  // (1 a keyboard, 2 a mouse)
+Uint64 g_kbm_next = 0;
+void kbm_soon() { g_kbm_next = SDL_GetTicks() + 500; }
+void kbm_poll() {
+    static bool failed = false;
+    static int said = -1;
+    const Uint64 now = SDL_GetTicks();
+    if (failed || now < g_kbm_next) return;
+    g_kbm_next = now + 2000;
+    auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+    auto act = env ? static_cast<jobject>(SDL_GetAndroidActivity()) : nullptr;
+    if (!act) return;
+    jclass cls = env->GetObjectClass(act);
+    jmethodID m = cls ? env->GetStaticMethodID(cls, "keyboardMouse", "()I") : nullptr;
+    int bits = 0;
+    if (!env->ExceptionCheck() && m) bits = env->CallStaticIntMethod(cls, m);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe(), env->ExceptionClear();
+        if (!m) failed = true, std::fprintf(stderr, "[input] GameActivity.keyboardMouse is missing: no Keybinds on the phone\n");
+        bits = 0;
+    }
+    if (cls) env->DeleteLocalRef(cls);
+    env->DeleteLocalRef(act);
+    g_kbm = bits;
+    if (bits != said)
+        std::fprintf(stderr, "[input] keyboard %s, mouse %s%s\n", bits & 1 ? "connected" : "none", bits & 2 ? "connected" : "none",
+                     bits == 3 ? ": the settings' Controls show Keybinds and the mouse's speed" : said == 3 ? ": Keybinds hidden again" : "");
+    said = bits;
+}
+
+// ---- a key or a mouse button went down (not while the settings are open: pressed() says so): the buttons of the
+// keybinds it is on, and what the stick's clicks and the item bar's keybinds do at once
+bool code_used(int code) {
+    for (int i = 0; i < BINDS; i++)
+        if (bind_has(i, code)) return true;
+    return false;
+}
+void code_down(int code) {
+    pressed(code_bits(code));
+    if (ui_settings_open() || padmap_active() || settings_panel_thanks_open() || typing()) return;
+    if (bind_has(BIND_RSTICK, code) && g_set.r3 == R3_LOCKON) touch_lock_key();  // (a controller's right stick click's)
+    if (bind_has(BIND_LSTICK, code)) {  // (the left stick's click: the town's list as the controller's, else the touch screen)
+        if (g_set.town == TOWN_L3 && town_list_open()) town_close();
+        else if (g_set.town == TOWN_L3 && town_available()) town_open(true);
+        else ui_toggle_bottom();
+    }
+    if (bind_has(BIND_ITEM_LEFT, code)) touch_item_key(-1);
+    if (bind_has(BIND_ITEM_RIGHT, code)) touch_item_key(1);
+}
+
+// ---- the mouse: captured (relative mode) by a left click on the game's picture while a keyboard and a mouse are
+// connected, let go by Escape, the settings, a text being typed or the app going away. A click on the touch screen or on a
+// touch control is a tap there, as in 0.1.9.3 (SDL makes a finger of each left click: touch.cpp says where it landed), and
+// captures nothing. Its movement turns the camera (the port's hook where the game's camera takes it, else the C-stick by
+// its speed), its buttons and wheel press what [Keybinds] says, and while it is captured its clicks make no taps (the
+// hidden pointer's place is nobody's). A finger's own mouse events (SDL makes one of each touch) are never the mouse's
+bool g_mouse_grab = false;      // the player's choice: clicked in (true), or Escape, the app away (false)
+bool g_mouse_captured = false;  // relative mode on now
+bool g_mouse_refused = false;   // SDL refused relative mode: no capture this session
+float g_mouse_dx = 0, g_mouse_dy = 0, g_mouse_vx = 0, g_mouse_vy = 0;
+Uint64 g_mouse_moved_ms = 0;
+void mouse_let_go(const char* why) {
+    if (g_mouse_grab) std::fprintf(stderr, "[input] the mouse let go (%s)\n", why);
+    g_mouse_grab = false;
+}
+void wheel_turn(int n) {  // (n notches up, > 0)
+    const int code = n > 0 ? kKeyWheelUp : kKeyWheelDown;
+    if (bind_has(BIND_ITEM_LEFT, code) || bind_has(BIND_ITEM_RIGHT, code)) {
+        for (int k = 0; k < std::min(std::abs(n), 4); k++) touch_item_key(bind_has(BIND_ITEM_LEFT, code) ? -1 : 1);
+        return;
+    }
+    if (!code_bits(code)) return;
+    g_wheel_until[code - kKeyWheelUp] = SDL_GetTicks() + kWheelPressMs;
+    pressed(code_bits(code));
+}
+bool mouse_event(const SDL_Event& e) {
+    const SDL_MouseID which = e.type == SDL_EVENT_MOUSE_MOTION ? e.motion.which
+                              : e.type == SDL_EVENT_MOUSE_WHEEL ? e.wheel.which : e.button.which;
+    if (which == SDL_TOUCH_MOUSEID) return false;  // (a finger: the touch controls' and the settings')
+    switch (e.type) {
+    case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+        const int b = e.button.button;
+        if (b < 1 || b > SDL_BUTTON_X2) return false;
+        const bool picture = b == SDL_BUTTON_LEFT && touch_mouse_click_on_picture(e.button.timestamp);
+        if (g_mouse_captured) {
+            g_last_pad = true;
+            g_mouse_held |= 1u << b;
+            code_down(kKeyMouse + b);
+            return true;
+        }
+        if (picture && !ui_settings_open() && !typing() && controls_keyboard_mouse() && !g_mouse_refused && !g_mouse_grab) {
+            std::fprintf(stderr, "[input] capturing the mouse (a click on the game's picture; Escape lets it go)\n");
+            g_mouse_grab = true;  // (the click that captures it presses nothing)
+            return true;
+        }
+        return false;
+    }
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (e.button.button >= 1 && e.button.button <= SDL_BUTTON_X2) g_mouse_held &= ~(1u << e.button.button);
+        return g_mouse_captured;
+    case SDL_EVENT_MOUSE_MOTION:
+        if (!g_mouse_captured) return false;
+        g_mouse_dx += e.motion.xrel, g_mouse_dy += e.motion.yrel;
+        return true;
+    case SDL_EVENT_MOUSE_WHEEL: {
+        if (!g_mouse_captured) return false;
+        const int n = static_cast<int>(e.wheel.integer_y) * (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1);
+        if (n) wheel_turn(n);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+// each turn of the loop: relative mode on while the mouse is the game's
+void mouse_capture(bool settings_open) {
+    const bool want = g_mouse_grab && !settings_open && !typing() && controls_keyboard_mouse() && !g_mouse_refused;
+    if (g_mouse_grab && !controls_keyboard_mouse()) mouse_let_go("no keyboard and mouse connected");
+    if (want == g_mouse_captured) return;
+    SDL_Window* w = SDL_GetKeyboardFocus();
+    if (!w) w = SDL_GetMouseFocus();
+    if (!w) return;
+    if (SDL_SetWindowRelativeMouseMode(w, want) || !want) {
+        g_mouse_captured = want;
+        std::fprintf(stderr, "[input] mouse %s\n", want ? "captured: it turns the camera" : "free");
+    } else {
+        std::fprintf(stderr, "[input] mouse capture refused: %s (the mouse turns no camera this session)\n", SDL_GetError());
+        g_mouse_refused = true, g_mouse_grab = false;
+    }
+    g_mouse_dx = g_mouse_dy = g_mouse_vx = g_mouse_vy = 0;
+    if (!want) g_mouse_held = 0;
+}
+// the mouse's movement since the last turn: the camera
+void mouse_camera(bool hook, float dt, ControlsInput& out) {
+    const float dx = g_mouse_dx, dy = g_mouse_dy;
+    g_mouse_dx = g_mouse_dy = 0;
+    const Uint64 now = SDL_GetTicks();
+    if (dx != 0 || dy != 0) g_mouse_moved_ms = now;
+    if (hook) {  // (the game's camera takes the port's turn: a fixed angle a count, as the MHGU port's hunt camera)
+        const float k = kMouseDegPerCount * g_set.mouse_sens;
+        out.cam_yaw += dx * k, out.cam_pitch -= dy * k;  // (the mouse up raises the camera, as a drag up does)
+        g_mouse_vx = g_mouse_vy = 0;
+        return;
+    }
+    // elsewhere the C-stick, by the mouse's speed (smoothed), unless the stick or the keys push it already
+    if (dt > 0) {
+        const float a = 1.0f - std::exp(-dt / kMouseSmooth);
+        g_mouse_vx += (dx / dt - g_mouse_vx) * a, g_mouse_vy += (dy / dt - g_mouse_vy) * a;
+    }
+    if (now - g_mouse_moved_ms > 100) g_mouse_vx = g_mouse_vy = 0;
+    const float x = g_mouse_vx * g_set.mouse_sens / kMouseFullSpeed, y = -g_mouse_vy * g_set.mouse_sens / kMouseFullSpeed;
+    const float m = std::hypot(x, y);
+    if (m < .02f || out.cstick_x != 0 || out.cstick_y != 0) return;
+    const float push = (.3f + .7f * std::min(1.0f, m)) / m;  // (past the game's own dead zone, as a drag's)
+    out.cstick_x = units(x * push), out.cstick_y = units(y * push);
+}
+
+// ---- the settings choosing a key (controls_capture): the next key, mouse button or wheel notch
+bool g_capture = false, g_capture_mouse = false;
+int g_captured = -1;
+bool capture_event(const SDL_Event& e) {
+    switch (e.type) {
+    case SDL_EVENT_KEY_DOWN:
+        if (e.key.repeat) return true;
+        g_captured = e.key.scancode == SDL_SCANCODE_ESCAPE || e.key.scancode == SDL_SCANCODE_AC_BACK ? 0 : e.key.scancode;
+        return true;
+    case SDL_EVENT_KEY_UP:
+        return false;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        if (e.button.which == SDL_TOUCH_MOUSEID || !g_capture_mouse || e.button.button < 1 || e.button.button > SDL_BUTTON_X2)
+            return false;  // (a finger, or the pointer on one of the view's rows: theirs)
+        g_captured = kKeyMouse + e.button.button;
+        return true;
+    case SDL_EVENT_MOUSE_WHEEL:
+        if (e.wheel.which == SDL_TOUCH_MOUSEID || e.wheel.integer_y == 0) return false;
+        g_captured = (e.wheel.integer_y > 0) == (e.wheel.direction != SDL_MOUSEWHEEL_FLIPPED) ? kKeyWheelUp : kKeyWheelDown;
+        return true;
+    default:
+        return false;
+    }
+}
+
+// ---- [Keybinds]' names: SDL's for a key, but its own for the ones whose name has a ',' (the list's separator) or a ';'
+// / '#' (a comment in the file), and for the mouse's buttons and wheel (the MHGU port's)
+const struct {
+    int code;
+    const char* name;
+} KEY_NAMES[] = {
+    {SDL_SCANCODE_COMMA, "Comma"}, {SDL_SCANCODE_KP_COMMA, "Keypad Comma"}, {SDL_SCANCODE_SEMICOLON, "Semicolon"},
+    {SDL_SCANCODE_KP_HASH, "Keypad Hash"}, {kKeyMouse + SDL_BUTTON_LEFT, "Mouse Left"},
+    {kKeyMouse + SDL_BUTTON_RIGHT, "Mouse Right"}, {kKeyMouse + SDL_BUTTON_MIDDLE, "Mouse Middle"},
+    {kKeyMouse + SDL_BUTTON_X1, "Mouse 4"}, {kKeyMouse + SDL_BUTTON_X2, "Mouse 5"}, {kKeyWheelUp, "Wheel Up"},
+    {kKeyWheelDown, "Wheel Down"},
+};
+int key_code(std::string name) {
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+    while (!name.empty() && name.front() == ' ') name.erase(0, 1);
+    if (name.empty()) return 0;
+    for (const auto& k : KEY_NAMES)
+        if (!SDL_strcasecmp(k.name, name.c_str())) return k.code;
+    const SDL_Scancode sc = SDL_GetScancodeFromName(name.c_str());
+    return sc != SDL_SCANCODE_UNKNOWN && !controls_key_name(sc).empty() ? static_cast<int>(sc) : 0;
+}
+void parse_keys(const std::string& text, int out[kBindKeys]) {
+    for (int k = 0; k < kBindKeys; k++) out[k] = 0;
+    if (!SDL_strcasecmp(text.c_str(), "None")) return;
+    std::stringstream in(text);
+    std::string one;
+    int n = 0;
+    while (n < kBindKeys && std::getline(in, one, ','))
+        if (const int code = key_code(one)) out[n++] = code;
+}
+
 }  // namespace
 
 void controls_init(const std::string& data_dir, std::function<void(bool, int, int)> set_touch) {
@@ -565,12 +851,15 @@ void controls_init(const std::string& data_dir, std::function<void(bool, int, in
 }
 
 bool controls_event(const SDL_Event& e) {
+    if (g_capture && capture_event(e)) return true;  // (the settings choosing a key: the next one is theirs)
     switch (e.type) {
     case SDL_EVENT_GAMEPAD_ADDED:
         open_pad(e.gdevice.which);
+        report_soon();
         return false;
     case SDL_EVENT_GAMEPAD_REMOVED:
         close_pad(e.gdevice.which);
+        report_soon();
         return false;
     case SDL_EVENT_GAMEPAD_REMAPPED:  // (the player mapped it, or forgot the map: padmap.cpp)
         if (Pad* p = find_pad(e.gdevice.which)) {
@@ -581,6 +870,7 @@ bool controls_event(const SDL_Event& e) {
         return false;
     case SDL_EVENT_JOYSTICK_ADDED:  // (also sent for gamepads, before their GAMEPAD_ADDED: joystick_seen skips those)
         joystick_seen(e.jdevice.which);
+        report_soon();
         return false;
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
         if (g_debug) std::fprintf(stderr, "[Info] Controls: %u %s up\n", (unsigned)e.gbutton.which,
@@ -639,21 +929,42 @@ bool controls_event(const SDL_Event& e) {
         return false;
     }
     case SDL_EVENT_FINGER_DOWN:
+        // (the finger SDL makes of a captured mouse's left click: at the hidden pointer's place, no tap; its lift and
+        // moves find no finger down)
+        if (e.tfinger.touchID == SDL_MOUSE_TOUCHID && g_mouse_captured) return true;
         g_last_pad = false;
         return false;
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
-        if (e.key.down && key_bit(e.key.scancode) != 0) g_last_pad = true;
-        if (e.key.scancode < SDL_SCANCODE_COUNT && !(e.key.down && typing())) {
-            if (e.key.down && !e.key.repeat && !g_keys[e.key.scancode]) pressed(key_bit(e.key.scancode));
-            g_keys[e.key.scancode] = e.key.down;
-        }
         if (!e.key.repeat)
             std::fprintf(stderr, "[Info] App: key %s %s\n", SDL_GetScancodeName(e.key.scancode), e.key.down ? "down" : "up");
+        // (Escape with the mouse captured lets it go, and is no B then)
+        if (e.key.down && !e.key.repeat && e.key.scancode == SDL_SCANCODE_ESCAPE && g_mouse_captured) {
+            mouse_let_go("Escape");
+            return true;
+        }
+        if (e.key.down && code_used(e.key.scancode)) g_last_pad = true;
+        if (e.key.scancode < SDL_SCANCODE_COUNT && !(e.key.down && typing())) {
+            if (e.key.down && !e.key.repeat && !g_keys[e.key.scancode]) code_down(e.key.scancode);
+            g_keys[e.key.scancode] = e.key.down;
+        }
+        return false;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_MOUSE_MOTION:
+    case SDL_EVENT_MOUSE_WHEEL:
+        return mouse_event(e);
+    case SDL_EVENT_KEYBOARD_ADDED:
+    case SDL_EVENT_KEYBOARD_REMOVED:
+    case SDL_EVENT_MOUSE_ADDED:
+    case SDL_EVENT_MOUSE_REMOVED:
+        kbm_soon();
         return false;
     case SDL_EVENT_WINDOW_FOCUS_LOST:
     case SDL_EVENT_DID_ENTER_BACKGROUND:
         std::fill(std::begin(g_keys), std::end(g_keys), false);  // (their ups will not come)
+        g_mouse_held = 0;
+        if (g_mouse_grab) mouse_let_go("the app in the background");
         return false;
     default:
         return false;
@@ -661,6 +972,8 @@ bool controls_event(const SDL_Event& e) {
 }
 
 ControlsInput controls_input(std::uint32_t game_frame) {
+    input_report();
+    kbm_poll();
     read_settings();
     padmap_poll();
     if (!g_scanned) scan();  // (controllers there at the start send no ADDED event to a loop that began after them)
@@ -679,6 +992,7 @@ ControlsInput controls_input(std::uint32_t game_frame) {
     if (g_chord && !(held & chord_bits)) g_chord = false;
     // the settings: nothing while they are open, and what is held as they close waits to be let go
     const bool open = ui_settings_open() || padmap_active() || settings_panel_thanks_open();
+    mouse_capture(open);
     if (g_was_open && !open) g_suppress = held;
     g_was_open = open;
     g_suppress &= held;
@@ -700,7 +1014,8 @@ ControlsInput controls_input(std::uint32_t game_frame) {
     // go waits to be let go
     static bool town_had = false;
     if (town_takes_pad()) {
-        Vec st = keys_stick(SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, false);
+        g_mouse_dx = g_mouse_dy = 0;  // (the mouse's movement meanwhile is no turn of the camera later)
+        Vec st = keys_stick(BIND_MOVE_UP, BIND_MOVE_DOWN, BIND_MOVE_LEFT, BIND_MOVE_RIGHT, false);
         if (pad) st = add(st, stick(pad, SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY));
         town_pad(held, g_town_presses, st.x, st.y);
         g_town_presses = 0;
@@ -728,9 +1043,9 @@ ControlsInput controls_input(std::uint32_t game_frame) {
     out.zl = (bits & ZL_BIT) != 0;
     out.zr = (bits & ZR_BIT) != 0;
     // the sticks: the controller's and the keys', added
-    const bool walk = g_keys[SDL_SCANCODE_LSHIFT] || g_keys[SDL_SCANCODE_RSHIFT];
-    Vec left = keys_stick(SDL_SCANCODE_W, SDL_SCANCODE_S, SDL_SCANCODE_A, SDL_SCANCODE_D, walk);
-    Vec right = keys_stick(SDL_SCANCODE_I, SDL_SCANCODE_K, SDL_SCANCODE_J, SDL_SCANCODE_L, false);
+    const bool walk = bind_held(BIND_WALK);
+    Vec left = keys_stick(BIND_MOVE_UP, BIND_MOVE_DOWN, BIND_MOVE_LEFT, BIND_MOVE_RIGHT, walk);
+    Vec right = keys_stick(BIND_CAM_UP, BIND_CAM_DOWN, BIND_CAM_LEFT, BIND_CAM_RIGHT, false);
     if (pad) {
         left = add(left, stick(pad, SDL_GAMEPAD_AXIS_LEFTX, SDL_GAMEPAD_AXIS_LEFTY));
         right = add(right, stick(pad, SDL_GAMEPAD_AXIS_RIGHTX, SDL_GAMEPAD_AXIS_RIGHTY));
@@ -754,6 +1069,7 @@ ControlsInput controls_input(std::uint32_t game_frame) {
     } else {
         out.cstick_x = units(right.x), out.cstick_y = units(right.y);
     }
+    mouse_camera(hook, dt, out);
     script_input(game_frame, out);
     g_out_buttons = out.buttons;
     return out;
@@ -823,4 +1139,69 @@ SDL_JoystickID controls_active_pad() {
 bool controls_a_is_south() {
     Pad* p = find_pad(g_active);
     return p && face_bit(p->pad, SDL_GAMEPAD_BUTTON_SOUTH) == mh4n::kPadA;
+}
+
+// ---- the keyboard's and the mouse's keybinds (controls.h)
+std::string controls_key_name(int code) {
+    for (const auto& k : KEY_NAMES)
+        if (k.code == code) return k.name;
+    const char* n = code > 0 && code < SDL_SCANCODE_COUNT ? SDL_GetScancodeName(static_cast<SDL_Scancode>(code)) : "";
+    return n && *n && !std::strpbrk(n, ",;#") ? n : "";
+}
+
+Keybinds controls_default_binds() {
+    Keybinds b;
+    auto set = [&b](int i, std::initializer_list<int> keys) {
+        int k = 0;
+        for (int c : keys) b.keys[i][k++] = c;
+    };
+    set(BIND_MOVE_UP, {SDL_SCANCODE_W}), set(BIND_MOVE_DOWN, {SDL_SCANCODE_S});
+    set(BIND_MOVE_LEFT, {SDL_SCANCODE_A}), set(BIND_MOVE_RIGHT, {SDL_SCANCODE_D});
+    set(BIND_WALK, {SDL_SCANCODE_LSHIFT, SDL_SCANCODE_RSHIFT});
+    set(BIND_CAM_UP, {SDL_SCANCODE_I}), set(BIND_CAM_DOWN, {SDL_SCANCODE_K});
+    set(BIND_CAM_LEFT, {SDL_SCANCODE_J}), set(BIND_CAM_RIGHT, {SDL_SCANCODE_L});
+    set(BIND_A, {SDL_SCANCODE_O, SDL_SCANCODE_F, kKeyMouse + SDL_BUTTON_RIGHT});
+    set(BIND_B, {SDL_SCANCODE_SPACE, SDL_SCANCODE_ESCAPE});
+    set(BIND_X, {SDL_SCANCODE_U, SDL_SCANCODE_X, kKeyMouse + SDL_BUTTON_LEFT});
+    set(BIND_Y, {SDL_SCANCODE_R, SDL_SCANCODE_Y, kKeyMouse + SDL_BUTTON_MIDDLE});
+    set(BIND_L, {SDL_SCANCODE_Q}), set(BIND_R, {SDL_SCANCODE_E});
+    set(BIND_ZL, {SDL_SCANCODE_TAB}), set(BIND_ZR, {SDL_SCANCODE_T});
+    set(BIND_START, {SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER}), set(BIND_SELECT, {SDL_SCANCODE_BACKSPACE});
+    set(BIND_DPAD_UP, {SDL_SCANCODE_UP}), set(BIND_DPAD_DOWN, {SDL_SCANCODE_DOWN});
+    set(BIND_DPAD_LEFT, {SDL_SCANCODE_LEFT}), set(BIND_DPAD_RIGHT, {SDL_SCANCODE_RIGHT});
+    set(BIND_LSTICK, {SDL_SCANCODE_LCTRL, SDL_SCANCODE_RCTRL}), set(BIND_RSTICK, {SDL_SCANCODE_LALT, SDL_SCANCODE_RALT});
+    set(BIND_ITEM_LEFT, {kKeyWheelUp}), set(BIND_ITEM_RIGHT, {kKeyWheelDown});
+    return b;
+}
+
+std::string controls_keys_text(const int keys[kBindKeys]) {
+    std::string t;
+    for (int k = 0; k < kBindKeys; k++) {
+        const std::string n = keys[k] ? controls_key_name(keys[k]) : "";
+        if (!n.empty()) t += (t.empty() ? "" : ", ") + n;
+    }
+    return t.empty() ? "None" : t;
+}
+
+Keybinds controls_read_binds() {
+    const Keybinds d = controls_default_binds();
+    Keybinds b = d;
+    for (int i = 0; i < BINDS; i++) {
+        const std::string v = app_setting("Keybinds", kBindNames[i], "");
+        if (!v.empty()) parse_keys(v, b.keys[i]);
+    }
+    return b;
+}
+
+bool controls_keyboard_mouse() { return g_kbm == 3; }
+
+void controls_capture(bool on, bool mouse) {
+    if (on && !g_capture) g_captured = -1;
+    g_capture = on, g_capture_mouse = on && mouse;
+}
+
+int controls_take_key() {
+    const int c = g_captured;
+    g_captured = -1;
+    return c;
 }

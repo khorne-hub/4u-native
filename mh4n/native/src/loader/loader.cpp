@@ -121,8 +121,51 @@ std::unique_ptr<Loader> Loader::OpenGameFolder(const std::string& dir, const std
         for (const std::string& applied : outcome.applied) {
             MH4N_LOG(Info, "Loader", "code mod: {}{}", folder, applied);
         }
+        // the exheader of a code mod (Heavenfall's: its code is longer than the game's segments), as Azahar applies
+        // load/mods/<id>/exheader.bin; with several mods, the last one's that has one
+        std::vector<std::string> folders;
+        for (const mods::Mod& m : enabled) {
+            if (m.on && m.code) folders.push_back(m.path);
+        }
+        std::string which;
+        if (const auto bytes = code_patch::ExheaderOverrideOf(folders, &which)) {
+            ExHeader mod;
+            std::string why;
+            if (!ParseExHeader(bytes->data(), bytes->size(), &mod, &why) ||
+                !CheckExheaderOverride(header, mod, code.size(), &why)) {
+                SetError(error, fmt::format("mods: {}exheader.bin: {}", which, why));
+                return nullptr;
+            }
+            MH4N_LOG(Info, "Loader",
+                     "code mod: {}exheader.bin in place of the game's: text 0x{:08X}+0x{:X}, ro 0x{:X}, data 0x{:X} "
+                     "(the game's 0x{:X}), bss 0x{:X}",
+                     which, mod.text.address, mod.text.size, mod.ro.size, mod.data.size, header.data.size, mod.bss_size);
+            header = mod;
+        }
     }
     return FromExHeader(header, std::move(code), header.title, error);
+}
+
+bool CheckExheaderOverride(const ExHeader& game, const ExHeader& mod, std::size_t code_size, std::string* error) {
+    if (code_patch::ModId(mod.program_id) != code_patch::ModId(game.program_id)) {
+        SetError(error, fmt::format("it is for program {:016X}, not this game's {:016X}", mod.program_id,
+                                    game.program_id));
+        return false;
+    }
+    if (mod.text.address != game.text.address || mod.ro.address != game.ro.address ||
+        mod.data.address != game.data.address) {
+        SetError(error, "its segments are not where the game's are: it is not for this game");
+        return false;
+    }
+    const u64 pages = static_cast<u64>(mod.text.num_pages) + mod.ro.num_pages + mod.data.num_pages;
+    if (code_size != pages * kPageSize) {
+        SetError(error, fmt::format("the code is 0x{:X} bytes but its segments take 0x{:X}: the mod's code.bin and "
+                                    "exheader.bin are not from the same build of the mod, or another mod changed the "
+                                    "code",
+                                    code_size, pages * kPageSize));
+        return false;
+    }
+    return true;
 }
 
 std::unique_ptr<Loader> Loader::FromExHeader(const ExHeader& header, std::vector<u8> code,

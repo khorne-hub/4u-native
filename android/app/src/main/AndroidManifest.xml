@@ -17,6 +17,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <!-- the on-phone builder (BuilderService): it goes on in the background, with a notification, and keeps the CPU awake -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- allowNativeHeapPointerTagging=false: the runtime turns host pointers into 32-bit guest addresses and does not
          expect the tag Android puts in the top byte of malloc's pointers on arm64.
@@ -39,12 +44,16 @@
         <meta-data android:name="SDL_ENV.SDL_ANDROID_TRAP_BACK_BUTTON" android:value="1" />
         <meta-data android:name="android.game_mode_config" android:resource="@xml/game_mode_config" />
 
+        <!-- resizeableActivity: a window that changes size (Samsung DeX maximized, split screen, a foldable opened) is
+             drawn again at its new size (app_native/android_main.cpp, SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED); not resizeable,
+             DeX restarted the game's process to resize it, a start that skips the entry, and the game started over and
+             over (4u-native #40) -->
         <activity android:name=".GameActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"
             android:launchMode="singleInstance"
             android:screenOrientation="sensorLandscape"
-            android:resizeableActivity="false"
+            android:resizeableActivity="true"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
             android:preferMinimalPostProcessing="true"
             android:exported="true">
@@ -86,6 +95,18 @@
             android:screenOrientation="sensorLandscape"
             android:excludeFromRecents="true"
             android:exported="false" />
+        <!-- Settings -> Shortcut with your image (S56): a pinned shortcut with the player's picture -->
+        <activity android:name=".ShortcutActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+        <!-- Settings -> Import DLC and event quests (S37): the player's own quest files, applied at the next start -->
+        <activity android:name=".ExtraImportActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:excludeFromRecents="true"
+            android:exported="false" />
         <!-- Settings -> Save folder (and the start gate's "Choose folder") -->
         <activity android:name=".SaveFolderActivity"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
@@ -111,6 +132,12 @@
             android:excludeFromRecents="true"
             android:exported="false" />
 
+        <!-- The layout editor's Picture -> Add pictures: the players' own pictures for the touch buttons (PicturesActivity) -->
+        <activity android:name=".PicturesActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:exported="false" />
+
         <!-- Import cheats or a mod (Settings, Cheats / Mods): the file picker, then a plate over the game while it is copied
              into the user folder (app_native/content.cpp reads the outcome) -->
         <activity android:name=".ImportActivity"
@@ -118,6 +145,19 @@
             android:screenOrientation="sensorLandscape"
             android:configChanges="layoutDirection|locale|grammaticalGender|fontScale|fontWeightAdjustment|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
             android:excludeFromRecents="true"
+            android:exported="false" />
+
+        <!-- Build the game code on the phone (Settings, Game folder): the screen, and the service that builds in the
+             background (the downloaded CPython and Zig run through the launchers libpyrun.so and libzigcc.so of the
+             native library folder; app_native/builder/toolrun.c) -->
+        <activity android:name=".BuilderActivity"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:screenOrientation="sensorLandscape"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+        <service android:name=".BuilderService"
+            android:foregroundServiceType="dataSync"
             android:exported="false" />
 
         <activity android:name=".LicensesActivity"

@@ -1498,6 +1498,9 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         if (SDLControllerManager.isDeviceSDLJoystick(deviceId)) {
             // Note that we process events with specific key codes here
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (event.getRepeatCount() == 0 && SDLControllerManager.faceButtonCheck(deviceId, keyCode)) {
+                    return true;  // (MH4U: gu-native #87)
+                }
                 if (SDLControllerManager.onNativePadDown(deviceId, keyCode, event.getScanCode())) {
                     return true;
                 }
@@ -1526,6 +1529,9 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
             }
         }
 
+        if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+            SDLControllerManager.keySeen(deviceId, keyCode, source);  // (MH4U: the log's input report, as the MHGU port's)
+        }
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             onNativeKeyDown(keyCode);
 

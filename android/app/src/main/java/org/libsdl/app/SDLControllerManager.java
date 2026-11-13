@@ -158,6 +158,25 @@ public class SDLControllerManager
     }
 
     private static final java.util.HashMap<Integer, Boolean> sPadKeyboards = new java.util.HashMap<>();
+    // MH4U: devices whose A, B, X or Y came though Android didn't list them (SDLJoystickHandler.faceButtonPressed)
+    static final java.util.Set<Integer> sFaceSeen = java.util.Collections.synchronizedSet(new java.util.HashSet<Integer>());
+
+    // MH4U: a key press of a device SDL reads as a joystick (handleKeyEvent): A, B, X or Y of one added without them
+    // adds it again with them. True: that press is spent (the controller isn't open yet: SDL would send it as a key,
+    // Enter or Escape, whose release then goes to the controller and the key stays down)
+    static boolean faceButtonCheck(int deviceId, int keyCode) {
+        if (keyCode != KeyEvent.KEYCODE_BUTTON_A && keyCode != KeyEvent.KEYCODE_BUTTON_B &&
+                keyCode != KeyEvent.KEYCODE_BUTTON_X && keyCode != KeyEvent.KEYCODE_BUTTON_Y) {
+            return false;
+        }
+        if (mJoystickHandler == null || !mJoystickHandler.faceButtonPressed(deviceId)) {
+            return false;
+        }
+        InputDevice device = InputDevice.getDevice(deviceId);
+        Log.i("MH4U", "input: " + (device != null ? device.getName() : "?") +
+                " sends A, B, X, Y without listing them: added again with them, read as a controller");
+        return true;
+    }
 
     static boolean padKeyboard(InputDevice device) {
         int id = device.getId();
@@ -172,6 +191,118 @@ public class SDLControllerManager
         sPadKeyboards.put(id, pad);
         if (pad) Log.i("MH4U", "input: " + device.getName() + " is a keyboard with a gamepad's buttons: read as a controller");
         return pad;
+    }
+
+    // MH4U: the log's input report (GameActivity.inputReport, app_native/controls.cpp), the MHGU port's: every input
+    // device as Android lists it - its sources, whether it has a gamepad's keys, whether it is read as a controller - and
+    // the keys that came from an external one that isn't, which went to the game as a keyboard's. Generic Bluetooth
+    // controllers that "aren't read" left nothing in the log to tell why (gu-native #87, #29: an Ipega PG-9025 seen as
+    // "... Keyboard")
+    private static final java.util.LinkedHashMap<Integer, java.util.LinkedHashMap<Integer, Integer>> sKeysSeen =
+            new java.util.LinkedHashMap<>();
+    private static boolean sReportDirty = true;
+    private static String sReportDevices = "";
+
+    static synchronized void keySeen(int deviceId, int keyCode, int source) {
+        // (a gamepad's buttons and the d-pad only: a keyboard's letters would put what was typed in a log shared openly)
+        boolean dpad = keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_DOWN ||
+                keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT ||
+                keyCode == KeyEvent.KEYCODE_DPAD_CENTER;
+        if (!dpad && !KeyEvent.isGamepadButton(keyCode)) return;
+        InputDevice device = InputDevice.getDevice(deviceId);
+        if (device == null || device.isVirtual() || (Build.VERSION.SDK_INT >= 29 && !device.isExternal())) return;
+        if (isDeviceSDLJoystick(deviceId)) return;
+        java.util.LinkedHashMap<Integer, Integer> keys = sKeysSeen.get(deviceId);
+        if (keys == null) {
+            if (sKeysSeen.size() >= 8) return;
+            keys = new java.util.LinkedHashMap<>();
+            sKeysSeen.put(deviceId, keys);
+        }
+        Integer n = keys.get(keyCode);
+        if (n == null && keys.size() >= 12) return;
+        keys.put(keyCode, n == null ? 1 : n + 1);
+        if (n == null) sReportDirty = true;  // (a key not seen before: reported again)
+        sDeviceLines.remove(deviceId);
+    }
+
+    private static String sourceNames(int s) {
+        StringBuilder b = new StringBuilder();
+        int[] bits = {InputDevice.SOURCE_KEYBOARD, InputDevice.SOURCE_DPAD, InputDevice.SOURCE_GAMEPAD,
+                InputDevice.SOURCE_JOYSTICK, InputDevice.SOURCE_MOUSE, InputDevice.SOURCE_TOUCHSCREEN,
+                InputDevice.SOURCE_TOUCHPAD, InputDevice.SOURCE_STYLUS};
+        String[] names = {"keyboard", "dpad", "gamepad", "joystick", "mouse", "touchscreen", "touchpad", "stylus"};
+        for (int i = 0; i < bits.length; i++)
+            if ((s & bits[i]) == bits[i]) b.append(b.length() > 0 ? "+" : "").append(names[i]);
+        return b.length() > 0 ? b.toString() : "none";
+    }
+
+    // (each device's line, made once: asked every few seconds, only the list of ids is read again then)
+    private static final java.util.HashMap<Integer, String> sDeviceLines = new java.util.HashMap<>();
+
+    // The report's lines, or "" when nothing changed since the last call (changed: always)
+    public static synchronized String inputReport(boolean changed) {
+        if (changed) sDeviceLines.clear();  // (a controller came or went: every line made again)
+        StringBuilder d = new StringBuilder();
+        for (int id : InputDevice.getDeviceIds()) {
+            String line = sDeviceLines.get(id);
+            if (line == null) {
+                line = deviceLine(id);
+                if (line == null) continue;
+                sDeviceLines.put(id, line);
+            }
+            d.append(line);
+        }
+        String devices = d.toString();
+        if (!changed && !sReportDirty && devices.equals(sReportDevices)) return "";
+        sReportDirty = false;
+        sReportDevices = devices;
+        StringBuilder r = new StringBuilder(devices);
+        for (java.util.Map.Entry<Integer, java.util.LinkedHashMap<Integer, Integer>> e : sKeysSeen.entrySet()) {
+            InputDevice dev = InputDevice.getDevice(e.getKey());
+            StringBuilder k = new StringBuilder();
+            for (java.util.Map.Entry<Integer, Integer> key : e.getValue().entrySet())
+                k.append(k.length() > 0 ? ", " : "").append(KeyEvent.keyCodeToString(key.getKey()).replace("KEYCODE_", ""))
+                        .append(" x").append(key.getValue());
+            r.append(String.format(java.util.Locale.ROOT, "[input] keys from device %d \"%s\", which is not read as a controller (the game took them as a keyboard's): %s\n",
+                    e.getKey(), dev != null ? dev.getName() : "(gone)", k));
+        }
+        return r.toString();
+    }
+
+    // MH4U: a physical keyboard (one with letters) and a mouse connected to the phone (GameActivity.keyboardMouse,
+    // app_native/controls.cpp), the MHGU port's: the settings show the keybinds and the mouse's rows only then. 1 a
+    // keyboard, 2 a mouse; external devices only - not the phone's own keys, a touch screen, a stylus or a touchpad, nor a
+    // virtual device
+    public static int keyboardMouse() {
+        int bits = 0;
+        for (int id : InputDevice.getDeviceIds()) {
+            InputDevice d = InputDevice.getDevice(id);
+            if (d == null || d.isVirtual() || (Build.VERSION.SDK_INT >= 29 && !d.isExternal())) continue;
+            int s = d.getSources();
+            if ((s & InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD &&
+                    d.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) bits |= 1;
+            // (a mouse the app has captured is a relative one meanwhile: Android changes its source to SOURCE_MOUSE_RELATIVE)
+            if ((s & InputDevice.SOURCE_MOUSE) == InputDevice.SOURCE_MOUSE ||
+                    (s & InputDevice.SOURCE_MOUSE_RELATIVE) == InputDevice.SOURCE_MOUSE_RELATIVE) bits |= 2;
+        }
+        return bits;
+    }
+
+    private static String deviceLine(int id) {
+        InputDevice dev = InputDevice.getDevice(id);
+        if (dev == null) return null;
+        boolean ext = Build.VERSION.SDK_INT < 29 || dev.isExternal();
+        boolean[] has = dev.hasKeys(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BUTTON_X,
+                KeyEvent.KEYCODE_BUTTON_Y, KeyEvent.KEYCODE_DPAD_UP);
+        StringBuilder k = new StringBuilder();
+        String[] kn = {"A", "B", "X", "Y", "d-pad"};
+        for (int i = 0; i < has.length; i++) if (has[i]) k.append(k.length() > 0 ? " " : "").append(kn[i]);
+        return String.format(java.util.Locale.ROOT,
+                "[input] device %d: \"%s\" %04x:%04x, %s%s, sources %s (0x%x), keyboard type %d, a gamepad's keys: %s, axes %d: %s\n",
+                id, dev.getName(), dev.getVendorId(), dev.getProductId(), ext ? "external" : "built in",
+                dev.isVirtual() ? ", virtual" : "", sourceNames(dev.getSources()), dev.getSources(),
+                dev.getKeyboardType(), k.length() > 0 ? k : "none", dev.getMotionRanges().size(),
+                isDeviceSDLJoystick(id) ? "read as a controller" : "not read as a controller");
     }
 
 }
@@ -192,6 +323,7 @@ class SDLJoystickHandler {
         SDLJoySensorListener sensorListener;
         Sensor accelerometerSensor;
         Sensor gyroscopeSensor;
+        int button_mask;  // MH4U: the buttons it was added with (faceButtonPressed)
     }
     static class RangeComparator implements Comparator<InputDevice.MotionRange> {
         @Override
@@ -316,9 +448,10 @@ class SDLJoystickHandler {
                     }
 
                     mJoysticks.add(joystick);
+                    joystick.button_mask = getButtonMask(joystickDevice);
                     SDLControllerManager.nativeAddJoystick(joystick.device_id, joystick.name, joystick.desc,
                             getVendorId(joystickDevice), getProductId(joystickDevice),
-                            getButtonMask(joystickDevice), joystick.axes.size(), getAxisMask(joystick.axes), joystick.hats.size()/2, can_rumble, has_rgb_led,
+                            joystick.button_mask, joystick.axes.size(), getAxisMask(joystick.axes), joystick.hats.size()/2, can_rumble, has_rgb_led,
                             has_accelerometer, has_gyroscope);
                 }
             }
@@ -361,6 +494,30 @@ class SDLJoystickHandler {
                 }
             }
         }
+    }
+
+    // MH4U: a controller that sends A, B, X and Y though Android doesn't list them among its keys (InputDevice.hasKeys:
+    // seen with a pad that passes itself off as another maker's, its keys in that one's layout) was added without them,
+    // so SDL made it no gamepad mapping. It was then never opened: its A and B reached the menus only as Enter and
+    // Escape, by the opposite places to the game's, and the game read nothing of it (gu-native #87). Its first press of one of
+    // them adds it again with the four of them, and SDL then reads it as any controller.
+    synchronized boolean faceButtonPressed(int device_id) {
+        SDLJoystick joystick = getJoystick(device_id);
+        if (joystick == null || (joystick.button_mask & 0xF) != 0 || !SDLControllerManager.sFaceSeen.add(device_id)) {
+            return false;
+        }
+        SDLControllerManager.nativeRemoveJoystick(device_id);
+        if (Build.VERSION.SDK_INT >= 31 /* Android 12.0 (S) */ && joystick.lightsSession != null) {
+            try {
+                joystick.lightsSession.close();
+            } catch (Exception e) {
+                // (already gone)
+            }
+            joystick.lightsSession = null;
+        }
+        mJoysticks.remove(joystick);
+        pollInputDevices();
+        return true;
     }
 
     synchronized protected SDLJoystick getJoystick(int device_id) {
@@ -543,6 +700,9 @@ class SDLJoystickHandler {
             if (has_keys[i]) {
                 button_mask |= masks[i];
             }
+        }
+        if (SDLControllerManager.sFaceSeen.contains(joystickDevice.getId())) {
+            button_mask |= 0xF;  // MH4U: A, B, X, Y seen pressed though not listed (faceButtonPressed)
         }
         return button_mask;
     }

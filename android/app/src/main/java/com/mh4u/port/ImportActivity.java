@@ -47,9 +47,12 @@ import java.util.zip.ZipInputStream;
  *   - cheats: a .txt of Gateway codes (Azahar's cheats format) to user/cheats/import.txt, which the settings merge into
  *     the game's cheats file (user/cheats/0004000000126300.txt), every cheat it brings off;
  *   - a mod: its .zip, unpacked, or its folder, copied, to user/load/mods/<name>/ (romfs/ and/or exefs/ in it). The folder
- *     with those parts is found up to three levels down (MyMod/0004000000126300/romfs: the 3DS emulators' layout); of the
- *     title folders 0004000000126300 is taken before the update's 0004000E00126300, which mods carry as a copy. A mod that
- *     changes the game's code starts off (load_order.txt): the code library must be made with it first.
+ *     with those parts is found up to four levels down (MyMod/0004000000126300/romfs: the 3DS emulators' layout;
+ *     MyMod v1/luma/titles/0004000000126300/romfs: Luma3DS's in a wrapping folder); of the title folders
+ *     0004000000126300 is taken before the update's 0004000E00126300, which mods carry as a copy. The parts' names in
+ *     any capitals (RomFS/ is romfs/). A mod with no romfs/ but the game's own folders (data/, eng/data/...: the files as
+ *     the RomFS has them) gets them put in a romfs/, as the PC tools' mod manager does. A mod that changes the game's
+ *     code starts off (load_order.txt): the code library must be made with it first.
  * The outcome goes to import_result.txt beside it, which the settings read when the game comes back:
  *   ok / <name> [/ 1 for a mod that changes the code]      or      error / <why> / <the system's words>
  */
@@ -269,11 +272,52 @@ public class ImportActivity extends Activity {
     private static boolean isTitle(String n) { return n.matches("(?i)[0-9a-f]{16}"); }
     private static boolean isOurs(String n) { return n.matches("(?i)0004000[0e]00126[13]00"); }
 
-    /** A mod's own folder: romfs/, romfs_ext/ or exefs/ in it, or a code patch of its own. */
+    /** A mod's own folder: romfs/, romfs_ext/ or exefs/ in it (in any capitals), or a code patch of its own. */
     private static boolean isModRoot(File d) {
-        for (String part : new String[] {"romfs", "romfs_ext", "exefs"}) if (new File(d, part).isDirectory()) return true;
+        for (String part : new String[] {"romfs", "romfs_ext", "exefs"}) if (child(d, part, true) != null) return true;
         for (String file : new String[] {"code.ips", "code.bps", "code.bin"}) if (new File(d, file).isFile()) return true;
         return false;
+    }
+
+    /** d's child named `name` in any capitals (a folder, or a file), or null. */
+    private static File child(File d, String name, boolean folder) {
+        File[] kids = d.listFiles();
+        if (kids != null)
+            for (File k : kids)
+                if (k.getName().equalsIgnoreCase(name) && k.isDirectory() == folder) return k;
+        return null;
+    }
+
+    /** The game's own top folders in its RomFS (the PC tools' mods.py ROMFS_TOP). */
+    private static final String[] ROMFS_TOP = {"data", "eng", "fre", "ger", "ita", "spa", "jpn"};
+
+    /** A folder up to three levels down holding the game's own folders (data/, eng/...) without a romfs/: or null. */
+    private static File findGameFolders(File d, int depth) {
+        for (String top : ROMFS_TOP) if (child(d, top, true) != null) return d;
+        if (depth >= 3) return null;
+        File[] kids = d.listFiles(File::isDirectory);
+        if (kids == null) return null;
+        Arrays.sort(kids, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        for (File k : kids) {
+            File r = findGameFolders(k, depth + 1);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
+    /** The parts' names as the runtime reads them (RomFS/ -> romfs/, ExeFS/ -> exefs/, Code.ips -> code.ips). */
+    private static void lowerParts(File root) throws IOException {
+        File[] kids = root.listFiles();
+        if (kids == null) return;
+        for (File k : kids) {
+            String low = k.getName().toLowerCase(java.util.Locale.ROOT);
+            boolean part = k.isDirectory() ? low.equals("romfs") || low.equals("romfs_ext") || low.equals("exefs")
+                                           : low.equals("code.ips") || low.equals("code.bps") || low.equals("code.bin");
+            if (!part || low.equals(k.getName())) continue;
+            File tmp = new File(root, ".rename-" + low), to = new File(root, low);
+            // (two steps: on a folder that ignores capitals RomFS and romfs are one name)
+            if (!k.renameTo(tmp) || !tmp.renameTo(to)) throw new Refused("unwritable", to.getPath());
+        }
     }
 
     private static boolean changesCode(File d) {
@@ -282,10 +326,10 @@ public class ImportActivity extends Activity {
         return false;
     }
 
-    /** The folder with the mod's parts, up to three levels down; the base game's title folder before the update's. */
+    /** The folder with the mod's parts, up to four levels down; the base game's title folder before the update's. */
     private static File findRoot(File d, int depth) {
         if (isModRoot(d)) return d;
-        if (depth >= 3) return null;
+        if (depth >= 4) return null;
         File[] kids = d.listFiles(File::isDirectory);
         if (kids == null) return null;
         Arrays.sort(kids, (a, b) -> rank(a.getName()) != rank(b.getName()) ? rank(a.getName()) - rank(b.getName())
@@ -339,7 +383,19 @@ public class ImportActivity extends Activity {
                 copyTree(uri, DocumentsContract.getTreeDocumentId(uri), tmp, 0);
             }
             File root = findRoot(tmp, 0);
-            if (root == null) throw new Refused("no_parts", "");
+            if (root == null) {  // the game's own folders without a romfs/ around them: into one
+                root = findGameFolders(tmp, 0);
+                if (root == null) throw new Refused("no_parts", "");
+                File romfs = new File(root, ".romfs-new");
+                if (!romfs.mkdirs()) throw new Refused("unwritable", romfs.getPath());
+                for (String top : ROMFS_TOP) {
+                    File g = child(root, top, true);
+                    if (g != null && !g.renameTo(new File(romfs, g.getName()))) throw new Refused("unwritable", g.getPath());
+                }
+                if (!romfs.renameTo(new File(root, "romfs"))) throw new Refused("unwritable", romfs.getPath());
+                Log.i(TAG, "mod import: the game's own folders put in a romfs/");
+            }
+            lowerParts(root);
             // a title folder of another game (or another region's)
             for (File p = root; p != null && !p.equals(tmp); p = p.getParentFile())
                 if (isTitle(p.getName()) && !isOurs(p.getName())) throw new Refused("not_this_game", p.getName());
@@ -357,7 +413,7 @@ public class ImportActivity extends Activity {
             File to = new File(mods, name);
             delete(to);  // (the same mod again: the new copy replaces it, its place and state kept)
             if (!root.renameTo(to)) throw new Refused("unwritable", to.getPath());
-            if (code) keepOff(name);
+            if (code) keepOff(modsDir(), name);
             Log.i(TAG, "mod import: " + name + (code ? " (it changes the code)" : ""));
             return name + "\n" + (code ? "1" : "0");
         } finally {
@@ -365,9 +421,12 @@ public class ImportActivity extends Activity {
         }
     }
 
-    /** A mod that changes the code starts off: load_order.txt gets "# off: <name>" unless it lists the name already. */
-    private void keepOff(String name) throws IOException {
-        File list = new File(modsDir(), "load_order.txt");
+    /**
+     * A mod that changes the code starts off: load_order.txt gets "# off: <name>" unless it lists the name already. (Also
+     * GameFolderActivity.syncMods's, for a mod of the game folder only 1.0's search finds.)
+     */
+    static void keepOff(File mods, String name) throws IOException {
+        File list = new File(mods, "load_order.txt");
         List<String> lines = new ArrayList<>();
         if (list.isFile()) {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(new FileInputStream(list), StandardCharsets.UTF_8))) {

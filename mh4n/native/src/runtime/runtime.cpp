@@ -9,6 +9,7 @@
 #include "../kernel/deterministic.h"
 #include "gpu_host.h"
 #include "mh4n/assert.h"
+#include "mh4n/crc32.h"
 #include "mh4n/log.h"
 #include "timer_resolution.h"
 
@@ -341,6 +342,47 @@ int Runtime::Boot(const Options& options) {
     }
 }
 
+// The checks of a code library beside MatchesWithin's (its text), from what it says of itself (game_version.c): its
+// .id file is the one made with it, and the code a mod put past the game's data is the one it was made from. Then its
+// game version's addresses go to GameAddress. False (logged) when the game must not start.
+bool Runtime::CheckLibraryBuild(const CodeLibrary& library, const std::string& path) {
+    if (!library.LibraryId().empty()) {
+        const std::string beside = ReadLibraryIdFile(path);
+        if (!beside.empty() && beside != library.LibraryId()) {
+            MH4N_LOG(Error, kLog,
+                     "the code library {} and the .id file beside it come from different builds (the library's id is "
+                     "{}, the .id file says {}): copy the .so and the .id of the same build together, made with this "
+                     "version's tools, and don't use a library someone else made",
+                     path, library.LibraryId(), beside);
+            return false;
+        }
+    }
+    if (library.ExtSize() != 0) {
+        const u32 base = library.ExtBase(), size = library.ExtSize();
+        const bool mapped = memory_->IsMapped(base, size);
+        const u32 crc = mapped ? Crc32(memory_->Base() + base, size) : 0;
+        if (!mapped || crc != library.ExtCrc32()) {
+            MH4N_LOG(Error, kLog,
+                     "the code library {} was made with another build of the code mod: the mod's code past the "
+                     "game's data (0x{:08X}+0x{:X}) is {} now, crc32 {:08X} when the library was made: make the "
+                     "library again with the mods that are on",
+                     path, base, size, mapped ? fmt::format("crc32 {:08X}", crc) : std::string("not there"),
+                     library.ExtCrc32());
+            return false;
+        }
+    }
+    SetGameAddresses(library.PortAddresses());
+    if (!library.GameVersion().empty()) {
+        MH4N_LOG(Info, kLog, "code library for {} (tools {}), {} of the port's addresses in that version{}",
+                 library.GameVersion(), library.LibraryId().empty() ? "?" : library.LibraryId(),
+                 library.PortAddresses().size(),
+                 library.ExtSize() ? fmt::format(", a code mod's code at 0x{:08X}+0x{:X}", library.ExtBase(),
+                                                 library.ExtSize())
+                                   : std::string());
+    }
+    return true;
+}
+
 // Boot: steps 1 to 8 of the header's list.
 int Runtime::Run(const Options& options) {
     options_ = options;
@@ -433,6 +475,9 @@ int Runtime::Run(const Options& options) {
             MH4N_LOG(Error, kLog, "the code library {} does not match {}: {}", *path, program_path_, error);
             return 2;
         }
+        if (!CheckLibraryBuild(*library, *path)) {
+            return 2;
+        }
         code_host_->SetLibrary(std::move(library));
     } else if (!main_entry_) {
         MH4N_LOG(Error, kLog, "the program needs its recompiled code: --code LIB");
@@ -514,8 +559,9 @@ void Runtime::PollFrame() {
     }
     // (memory_->Read<u32>(kFrameCounterAddress), with the mapping looked up again only when it changed)
     if (const u64 changes = memory_->MapChanges(); changes != frame_map_changes_ || memory_.get() != frame_memory_) {
-        frame_counter_ = memory_->IsMapped(kFrameCounterAddress, sizeof(u32)) ? memory_->Base() + kFrameCounterAddress
-                                                                              : nullptr;
+        // (the running version's: GameAddress, from the code library's table)
+        const u32 frame_counter = GameAddress(kFrameCounterAddress);
+        frame_counter_ = memory_->IsMapped(frame_counter, sizeof(u32)) ? memory_->Base() + frame_counter : nullptr;
         frame_memory_ = memory_.get();
         frame_map_changes_ = changes;
     }

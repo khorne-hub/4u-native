@@ -6,6 +6,7 @@
 #include <fmt/format.h>
 
 #include "gpu/backend/core/impl.h"
+#include "gpu/backend/driver_hooks.h"
 #include "mh4n/assert.h"
 #include "mh4n/log.h"
 
@@ -64,12 +65,29 @@ void ReportOwnerRuleBreach(OwnerRule rule, std::string message) {
     std::abort();
 }
 
+// ---- a lost device ---------------------------------------------------------------------------------
+
+// VK_ERROR_DEVICE_LOST from a submission, a fence or a wait: the GPU stopped (a fault or a hang the driver gave up on),
+// and nothing submitted runs any more. Before, the submissions after it failed one by one and a wait for one of them
+// (the fences of a Vulkan 1.1 driver: never signalled) went on for ever: the game froze on its last picture with 0 FPS
+// and had to be closed by hand (4u-native #47, an Adreno 610 on Vulkan 1.1.128). Now it is said once in the log, with
+// where and what came last, the host is told (driver_hooks.h device_lost: the Android app ends the game with its error
+// screen, as MHGU for Android does), and every wait returns at once.
+void Backend::Impl::DeviceLost(const char* where, VkResult result) {
+    if (device_lost.exchange(true)) return;
+    const std::string text = fmt::format("{} ({}) after submission {} of {}", where, static_cast<int>(result),
+                                         fence_completed.load(), last_submitted.load());
+    MH4N_LOG(Critical, "RHI", "rhi: the device is lost: {}", text);
+    core::HostDeviceLost(text);
+}
+
 // ---- Completed value and waiting -----------------------------------------------------------------
 
 TimelineValue Backend::Impl::Completed() {
     if (timeline != VK_NULL_HANDLE) {
         u64 value = 0;
-        if (vkGetSemaphoreCounterValue(device->vk, timeline, &value) != VK_SUCCESS) {
+        if (const VkResult r = vkGetSemaphoreCounterValue(device->vk, timeline, &value); r != VK_SUCCESS) {
+            if (r == VK_ERROR_DEVICE_LOST) DeviceLost("the timeline's value", r);
             return fence_completed.load();
         }
         return value;
@@ -77,8 +95,9 @@ TimelineValue Backend::Impl::Completed() {
     std::lock_guard lock(fence_mutex);
     while (!pending_fences.empty()) {
         PendingFence& front = pending_fences.front();
-        if (vkGetFenceStatus(device->vk, static_cast<::plume::VulkanCommandFence*>(front.fence.get())->vk) !=
-            VK_SUCCESS) {
+        const VkResult status = vkGetFenceStatus(device->vk, static_cast<::plume::VulkanCommandFence*>(front.fence.get())->vk);
+        if (status != VK_SUCCESS) {
+            if (status == VK_ERROR_DEVICE_LOST) DeviceLost("a fence's status", status);
             break;
         }
         fence_completed = front.value;
@@ -103,21 +122,25 @@ void Backend::Impl::WaitFor(TimelineValue value) {
         info.semaphoreCount = 1;
         info.pSemaphores = &timeline;
         info.pValues = &value;
-        const VkResult result = vkWaitSemaphores(device->vk, &info, UINT64_MAX);
-        if (result != VK_SUCCESS) {
+        const VkResult result = device_lost.load() ? VK_ERROR_DEVICE_LOST : vkWaitSemaphores(device->vk, &info, UINT64_MAX);
+        if (result == VK_ERROR_DEVICE_LOST) {
+            DeviceLost("a wait", result);
+        } else if (result != VK_SUCCESS) {
             MH4N_LOG(Error, "RHI", "rhi: vkWaitSemaphores failed with {}", static_cast<int>(result));
         }
         return;
     }
     // Fences, in submission order. The wait runs in short slices under the fence mutex so that no
-    // other thread resets a fence being waited for.
-    while (Completed() < value) {
+    // other thread resets a fence being waited for. (A lost device: no more, DeviceLost)
+    while (!device_lost.load() && Completed() < value) {
         std::lock_guard lock(fence_mutex);
         if (pending_fences.empty()) {
             continue;
         }
         VkFence fence = static_cast<::plume::VulkanCommandFence*>(pending_fences.front().fence.get())->vk;
-        vkWaitForFences(device->vk, 1, &fence, VK_TRUE, 2'000'000);
+        if (const VkResult r = vkWaitForFences(device->vk, 1, &fence, VK_TRUE, 2'000'000); r == VK_ERROR_DEVICE_LOST) {
+            DeviceLost("a fence's wait", r);
+        }
     }
 }
 
@@ -267,6 +290,9 @@ TimelineValue SubmitRecorder(Backend::Impl& backend, Recorder&& recorder, std::s
             backend.queue->executeCommandListsEx(list, list_count, wait_semaphores.data(),
                                                  static_cast<uint32_t>(wait_semaphores.size()), wait_stages.data(),
                                                  wait_values.data(), &signal, 1, &value, nullptr);
+            if (backend.queue->lastSubmitResult == VK_ERROR_DEVICE_LOST) {  // (plume patch 23)
+                backend.DeviceLost("a submission", backend.queue->lastSubmitResult);
+            }
         } else {
             std::unique_ptr<::plume::RenderCommandFence> fence;
             {
@@ -285,6 +311,9 @@ TimelineValue SubmitRecorder(Backend::Impl& backend, Recorder&& recorder, std::s
                 backend.pending_fences.push_back(PendingFence{value, std::move(fence)});
             }
             backend.queue->executeCommandLists(list, list_count, nullptr, 0, nullptr, 0, raw);
+            if (backend.queue->lastSubmitResult == VK_ERROR_DEVICE_LOST) {  // (plume patch 23)
+                backend.DeviceLost("a submission", backend.queue->lastSubmitResult);
+            }
         }
     }
 

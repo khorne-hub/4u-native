@@ -9,6 +9,8 @@
 //                                   game's code at load. The code library is recompiled from the code,
 //                                   so it must be made with the same code mods (tools/build_game.py --mods):
 //                                   with others the runtime refuses it and the game does not start.
+//   load/mods/<name>/exheader.bin   goes with a code.bin that is longer than the game's segments (Heavenfall):
+//                                   it takes the place of the game's exheader (the last mod's that has one)
 //   load/mods/0004000000126300/    Azahar's own layout: a mod like the others (named by the title id)
 //
 // A folder named as another title's id (16 hex digits) is not this game's and is left out; so is one whose
@@ -45,6 +47,7 @@ struct Mod {
     bool on = true;
     bool romfs = false;            // romfs/ or romfs_ext/
     bool code = false;             // a code replacement or patch: the code library must be made with it
+    bool exheader = false;         // an exheader.bin (it counts as part of a code mod: code is true too)
     bool from_game_folder = false;  // copied from the mods folder beside the game (the app replaces it at start)
 };
 
@@ -62,6 +65,15 @@ bool SaveOrder(const std::string& folder, const std::vector<Mod>& mods, std::str
 
 // The game's code with the code mods of `mods` that are on applied, in order (code_patch::ApplyFolders).
 code_patch::Outcome ApplyCode(const std::vector<Mod>& mods, std::vector<u8>& code, u32 bss_pages);
+// The code mods of `mods` that are on and don't go together (code_patch::CodeConflicts): Heavenfall's code.bin with
+// jM5557's code.ips, two code replacements, an exheader.bin with another mod's code... `a` and `b` are mod names.
+struct CodeConflict {
+    code_patch::CodeConflict::Kind kind;
+    std::string a, b;
+};
+std::vector<CodeConflict> CodeConflicts(const std::vector<Mod>& mods);
+// The folders of the code mods of `mods` that are on, in load order.
+std::vector<std::string> CodeFolders(const std::vector<Mod>& mods);
 // The LayeredFS layers of the mods that are on, in order: each one's romfs/ and romfs_ext/.
 struct Layer {
     std::string romfs, romfs_ext;
@@ -81,8 +93,9 @@ std::string RunningGameFolder();
 u64 RunningProgramId();
 
 // Would `library` take the game's code (game_folder's exheader.bin and code.bin) with the code mods of
-// `mods` that are on? Reads the files: off the interface's thread. `error`: why it can't be told (a file,
-// a patch that does not apply); then `matches` is false.
+// `mods` that are on (and the exheader.bin of one of them, as the loader takes it)? Reads the files: off the
+// interface's thread. `error`: why it can't be told (a file, a patch that does not apply, a mod's exheader the
+// loader refuses); then `matches` is false.
 struct CodeCheck {
     bool matches = false;
     std::string error;

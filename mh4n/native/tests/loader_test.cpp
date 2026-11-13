@@ -779,3 +779,79 @@ TEST_CASE("DescribeProcessImage lists the fields and the segment map") {
     CHECK(text.find("text   0x00100000-0x00101000 size 0x00001000 r-x Code") != std::string::npos);
     CHECK(text.find("stack  0x0FFFC000-0x10000000 size 0x00004000 rw- Locked") != std::string::npos);
 }
+
+TEST_CASE("a code mod's exheader.bin takes the game's place: Heavenfall's longer code loads (D72)") {
+    // the game: text 3 pages, ro 1, data 2; the mod: its code.bin with data grown by 3 pages (over the .bss and past
+    // it), its exheader.bin saying so, .bss 0
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "mh4n_loader_test_mod_exheader";
+    fs::remove_all(root);
+    const fs::path game = root / "game", load = root / "user" / "load";
+    fs::create_directories(game);
+    const auto write = [](const fs::path& p, const std::vector<u8>& data) {
+        fs::create_directories(p.parent_path());
+        std::ofstream(p, std::ios::binary)
+            .write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
+    };
+    const ExhParams p;
+    write(game / "exheader.bin", MakeExheader(p));
+    write(game / "code.bin", MakeCode(p));
+    ExhParams m = p;
+    m.data_pages = 5;
+    m.data_size = 0x5000;
+    m.bss_size = 0;
+    std::vector<u8> mod_code = MakeCode(m);
+    mod_code[mod_code.size() - 1] = 0x5A;  // (the extension's last byte)
+    write(load / "mods" / "Heavenfall" / "exefs" / "code.bin", mod_code);
+    write(load / "mods" / "Heavenfall" / "exheader.bin", MakeExheader(m));
+
+    std::string error;
+    auto loader = Loader::OpenGameFolder(game.string(), load.string() + "/", &error);
+    REQUIRE_MESSAGE(loader, error);
+    const ProcessImage& image = loader->Image();
+    REQUIRE(image.segments.size() == 4);
+    CHECK(image.segments[2].name == "data");
+    CHECK(image.segments[2].size == 0x5000);  // 5 pages of data, no .bss
+    auto memory = NewMemory();
+    FcramRegions regions(image.memory_mode);
+    REQUIRE_MESSAGE(loader->Map(*memory, regions, &error), error);
+    CHECK(Bytes(*memory, 0x00304FFF, 1)[0] == 0x5A);
+
+    // the same mod's code.bin with another build's exheader (a page short): refused, saying so
+    m.data_pages = 4;
+    m.data_size = 0x4000;
+    write(load / "mods" / "Heavenfall" / "exheader.bin", MakeExheader(m));
+    CHECK_FALSE(Loader::OpenGameFolder(game.string(), load.string() + "/", &error));
+    CHECK(error.find("Heavenfall/exheader.bin") != std::string::npos);
+    CHECK(error.find("not from the same build") != std::string::npos);
+    // another title's exheader
+    auto other = MakeExheader(p);
+    Put64(other, 0x200, 0x0004000000126300);
+    write(load / "mods" / "Heavenfall" / "exheader.bin", other);
+    CHECK_FALSE(Loader::OpenGameFolder(game.string(), load.string() + "/", &error));
+    CHECK(error.find("not this game's") != std::string::npos);
+    // without the exheader the longer code is refused as before
+    fs::remove(load / "mods" / "Heavenfall" / "exheader.bin");
+    CHECK_FALSE(Loader::OpenGameFolder(game.string(), load.string() + "/", &error));
+    CHECK(error.find("were they made from the same title") != std::string::npos);
+    fs::remove_all(root);
+}
+
+TEST_CASE("CheckExheaderOverride: the same program and segment addresses, the code as big as its segments") {
+    ExHeader game, mod;
+    const auto g = MakeExheader();
+    std::string error;
+    REQUIRE(ParseExHeader(g.data(), g.size(), &game, &error));
+    ExhParams q;
+    q.text_size = 0x2E00;  // (another version's code: another size is fine)
+    const auto e = MakeExheader(q);
+    REQUIRE(ParseExHeader(e.data(), e.size(), &mod, &error));
+    CHECK(CheckExheaderOverride(game, mod, 6 * 0x1000, &error));
+    CHECK_FALSE(CheckExheaderOverride(game, mod, 7 * 0x1000, &error));
+    ExhParams r;
+    r.ro_addr = 0x00210000;
+    const auto moved = MakeExheader(r);
+    REQUIRE(ParseExHeader(moved.data(), moved.size(), &mod, &error));
+    CHECK_FALSE(CheckExheaderOverride(game, mod, 6 * 0x1000, &error));
+    CHECK(error.find("not where the game's are") != std::string::npos);
+}

@@ -1,6 +1,7 @@
 // The app's side of the network rooms (net_rooms.h).
 #include "net_rooms.h"
 
+#include "chat_app.h"
 #include "net_lan.h"
 
 #include <SDL3/SDL.h>
@@ -26,6 +27,8 @@ unsigned g_serial = 0;
 rooms::State g_state = rooms::State::Idle;  // the state the lines last told of
 
 void add(NetLine line) {
+    // (a chat line, someone's or this phone's: the port's chat too, as its Room - chat_app.cpp)
+    if (line.kind == NetLine::Chat || line.kind == NetLine::Mine) chat_app_room_line(line.nick, line.text, line.kind == NetLine::Mine);
     line.time = SDL_GetTicks() / 1000.0;
     line.serial = ++g_serial;
     g_lines.push_back(std::move(line));

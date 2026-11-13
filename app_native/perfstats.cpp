@@ -153,6 +153,16 @@ extern "C" void perfstats_poll(void) {
 
 extern "C" bool perfstats_visible(void) { return config_live_show_stats() != 0; }
 
+// The plate as last drawn, for the layout editor's frame (perfstats_rect)
+static std::atomic<float> g_plate[4];
+static std::atomic<uint64_t> g_plate_at;
+extern "C" bool perfstats_rect(float r[4]) {
+    uint64_t at = g_plate_at.load();
+    if (!at || SDL_GetTicksNS() - at > 500000000ull) return false;
+    for (int i = 0; i < 4; i++) r[i] = g_plate[i].load();
+    return true;
+}
+
 extern "C" void perfstats_draw(float w, float h) {
     // the measures: the frames presented in each half second; the longest gap between two of these calls (the game's
     // frames) in each second, the last whole second's shown (the one going on until there is one)
@@ -225,8 +235,10 @@ extern "C" void perfstats_draw(float w, float h) {
         fs *= k, padx *= k, pady *= k, tw *= k;
     }
     float pw = tw + 2 * padx, ph = fs + 2 * pady + 2 * line * 1.7f;
-    float x0 = pw <= hi - lo ? std::clamp(.62f * w - pw * .5f, lo, hi - pw) : (lo + hi - pw) * .5f;
-    ImVec2 p0(x0, .01f * h), p1(x0 + pw, .01f * h + ph);
+    float x0 = pw <= hi - lo ? std::clamp(.62f * w - pw * .5f, lo, hi - pw) : (lo + hi - pw) * .5f, y0 = .01f * h;
+    touch_fps_place(w, h, pw, ph, &x0, &y0);  // (moved in the layout editor: where the player put it)
+    ImVec2 p0(x0, y0), p1(x0 + pw, y0 + ph);
+    g_plate[0] = p0.x, g_plate[1] = p0.y, g_plate[2] = p1.x, g_plate[3] = p1.y, g_plate_at = SDL_GetTicksNS();
     ImDrawList *dl = ImGui::GetBackgroundDrawList();  // (under the port's menus and notices, as the touch controls)
     dl->AddRectFilled(p0, p1, WINE);
     dl->AddRect(p0, p1, IM_COL32(0, 0, 0, 255), 0.0f, line);

@@ -17,6 +17,8 @@
 // What the device's EGL and GL can do; false: shared pictures can't be shown (the app asks for CPU pixels).
 bool shared_screens_init(SDL_Renderer* renderer);
 bool shared_screens_available();
+// The screens went to the app as pixels as a last resort (shared_screens_stop_sharing): true once, for the notice
+bool shared_screens_valve_notice_take();
 
 // One screen as the window shows it: a shared picture or CPU pixels, whichever came last.
 struct SharedScreenView {

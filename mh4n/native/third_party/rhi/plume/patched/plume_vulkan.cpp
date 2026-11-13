@@ -3917,6 +3917,7 @@ namespace plume {
         }
 
         if (res != VK_SUCCESS) {
+            lastSubmitResult = res;
             fprintf(stderr, "vkQueueSubmit failed with error code 0x%X.\n", res);
             return;
         }

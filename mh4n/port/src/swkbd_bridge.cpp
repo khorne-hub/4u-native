@@ -1,5 +1,7 @@
 #include "swkbd_bridge.h"
 
+#include "game_addr.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <mutex>
@@ -15,9 +17,9 @@ namespace Port::Keyboard {
 
 namespace {
 
-// USA v1.3.0 (docs/research/keyboard.md). The keyboard, sSoftwareKeyboard (DTI 0x010bd030), made on first use by
+// USA v1.3.0 (docs/research/keyboard.md); the addresses are GameAddrs (game_addr.h). The keyboard, sSoftwareKeyboard (DTI 0x010bd030), made on first use by
 // sGameControl (0x002b5e28) and kept for good.
-constexpr u32 SKBD_INSTANCE = 0x0104deb4;   // sSoftwareKeyboard*
+GameAddr SKBD_INSTANCE{0x0104deb4};   // sSoftwareKeyboard*
 // its configuration, a copy of the 3DS's SwkbdConfig at +0x1c (the fields up to the hint where the 3DS has them)
 constexpr u32 KBD_TYPE = 0x1c;              // u32: 0 normal, 1 QWERTY, 2 number pad, 3 western
 constexpr u32 KBD_BUTTONS = 0x20;           // u32: buttons minus one (3 none)
@@ -36,9 +38,9 @@ constexpr u32 TM_CURSOR = 0x14;             // u32
 constexpr u32 LM_FONT = 0x24;               // nSwkbd::LineManager: the font that lays the lines out (set once the text
                                             // area is made, a frame or two after the keyboard opens)
 // functions
-constexpr u32 TM_SET_TEXT = 0x00666d8c;     // TextManager::setText(this, const u16* text, int length): cursor at 0
-constexpr u32 LM_FIND_LINE = 0x006654b4;    // LineManager::findLine(this, int position): the cursor's line
-constexpr u32 KBD_FINISH = 0x003ae264;      // sSoftwareKeyboard::finish(this, bool decided, int button): what a
+GameAddr TM_SET_TEXT{0x00666d8c};     // TextManager::setText(this, const u16* text, int length): cursor at 0
+GameAddr LM_FIND_LINE{0x006654b4};    // LineManager::findLine(this, int position): the cursor's line
+GameAddr KBD_FINISH{0x003ae264};      // sSoftwareKeyboard::finish(this, bool decided, int button): what a
                                             // dialog button does (the return code, the text for the game, closing)
 constexpr u32 KBD_SPARE = 0x38;             // the text box's room beyond max_length
 

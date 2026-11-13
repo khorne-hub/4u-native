@@ -2,7 +2,10 @@
 // (LoadLibraryExW) and the macOS one (dlopen, as Linux) run in the native-windows and native-macos
 // jobs of .github/workflows/native.yml (N1-22).
 #include <algorithm>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <mutex>
 #include <string>
 
 #include <fmt/format.h>
@@ -175,7 +178,62 @@ std::unique_ptr<CodeLibrary> CodeLibrary::Load(const std::string& path, bool det
     library->deterministic_ = deterministic;
     library->handle_ = handle;
     library->info_ = std::move(info);
+    library->ReadGameVersion();
     return library;
+}
+
+void CodeLibrary::ReadGameVersion() {
+    // (tools/game_version.py's version_source: optional symbols, so a library made before them loads as it did)
+    if (const auto* version = static_cast<const char*>(FindSymbol(handle_, "rc_game_version"))) {
+        game_version_.assign(version, strnlen(version, 64));
+    }
+    if (const auto* id = static_cast<const char*>(FindSymbol(handle_, "rc_library_id"))) {
+        library_id_.assign(id, strnlen(id, 64));
+    }
+    const auto* count = static_cast<const u32*>(FindSymbol(handle_, "rc_port_addr_count"));
+    const auto* usa = static_cast<const u32*>(FindSymbol(handle_, "rc_port_addr_usa"));
+    const auto* here = static_cast<const u32*>(FindSymbol(handle_, "rc_port_addr_here"));
+    if (count && usa && here && *count < 0x10000) {
+        for (u32 i = 0; i < *count; ++i) port_addresses_.emplace_back(usa[i], here[i]);
+        std::sort(port_addresses_.begin(), port_addresses_.end());
+    }
+    const auto symbol32 = [&](const char* name) {
+        const auto* value = static_cast<const u32*>(FindSymbol(handle_, name));
+        return value ? *value : 0u;
+    };
+    ext_base_ = symbol32("rc_ext_base");
+    ext_size_ = symbol32("rc_ext_size");
+    ext_crc32_ = symbol32("rc_ext_crc32");
+}
+
+namespace {
+std::mutex g_game_addresses_mutex;
+std::vector<std::pair<u32, u32>> g_game_addresses;
+}  // namespace
+
+void SetGameAddresses(std::vector<std::pair<u32, u32>> table) {
+    std::sort(table.begin(), table.end());
+    std::lock_guard lock(g_game_addresses_mutex);
+    g_game_addresses = std::move(table);
+}
+
+u32 GameAddress(u32 usa_address) {
+    std::lock_guard lock(g_game_addresses_mutex);
+    const auto it = std::lower_bound(g_game_addresses.begin(), g_game_addresses.end(), std::make_pair(usa_address, 0u));
+    return it != g_game_addresses.end() && it->first == usa_address ? it->second : usa_address;
+}
+
+std::string ReadLibraryIdFile(const std::string& library_path) {
+#if defined(_WIN32)
+    std::filesystem::path id = ResolvePath(std::filesystem::path(ToWide(library_path)));
+#else
+    std::filesystem::path id = ResolvePath(std::filesystem::path(library_path));
+#endif
+    id.replace_extension(".id");
+    std::ifstream in(id);
+    std::string word;
+    in >> word;
+    return word;
 }
 
 CodeLibrary::~CodeLibrary() {

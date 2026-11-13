@@ -23,9 +23,15 @@
 //                                  START + SELECT, Guide the settings): one with no buttons leaves it as it was. None by
 //                                  default. The MHGU port's [Touch] Combo<n>Pad, with Select for its Minus
 //
-// The keyboard (MHGU's keys where it has them): W A S D the Circle Pad (Shift held: walking), I J K L the camera (as
-// the right stick), U X, O or F A, Space B, R Y, Q L, E R, Tab ZL, T ZR, Enter START, Backspace SELECT, the arrows the
-// D-pad (and X and Y their own letters, Escape B).
+// The keyboard and the mouse: the keys and mouse buttons of [Keybinds] in mh4u-app.ini (the MHGU port's names and
+// format, "O, F, Mouse Right"; at most kBindKeys each). By default W A S D the Circle Pad (Shift held: walking), I J K L
+// the camera (as the right stick), U X or the left click X, O F or the right click A, Space or Escape B, R Y or the
+// middle click Y, Q L, E R, Tab ZL, T ZR, Enter START, Backspace SELECT, the arrows the D-pad, Ctrl the left stick's click
+// (the touch screen, as a controller's), Alt the right stick's (the lock-on, [Controls] R3), the wheel the item bar.
+// With a keyboard and a mouse connected (controls_keyboard_mouse) a left click on the game's picture captures the mouse
+// (one on the touch screen or a touch control is a tap there, as before): its movement turns the camera (MouseSensitivity
+// in [Mouse], 0.08 degrees a count at 1.0, as the MHGU port's hunt camera), its buttons press what [Keybinds] says, and
+// Escape lets it go (Escape is B again then). The settings show Keybinds and the mouse's speed only then.
 #pragma once
 #include <SDL3/SDL.h>
 
@@ -68,6 +74,38 @@ bool controls_gyro(bool aiming, float* right_deg, float* up_deg);
 // The game's buttons the controller and the keys held at the last controls_input (mh4n::kPad* bits)
 std::uint32_t controls_buttons();
 constexpr float kGyroSensMin = 0.2f, kGyroSensMax = 3.0f;  // [Controls] GyroSensitivity (1.0 the same angle)
+
+// ---- the keyboard's and the mouse's keybinds ([Keybinds], the MHGU port's names; START and SELECT for its Plus and Minus)
+enum Bind {
+    BIND_MOVE_UP, BIND_MOVE_DOWN, BIND_MOVE_LEFT, BIND_MOVE_RIGHT, BIND_WALK, BIND_CAM_UP, BIND_CAM_DOWN, BIND_CAM_LEFT,
+    BIND_CAM_RIGHT, BIND_A, BIND_B, BIND_X, BIND_Y, BIND_L, BIND_R, BIND_ZL, BIND_ZR, BIND_START, BIND_SELECT,
+    BIND_DPAD_UP, BIND_DPAD_DOWN, BIND_DPAD_LEFT, BIND_DPAD_RIGHT, BIND_LSTICK, BIND_RSTICK, BIND_ITEM_LEFT,
+    BIND_ITEM_RIGHT, BIND_COMBO1, BIND_COMBO6 = BIND_COMBO1 + 5, BINDS
+};
+inline constexpr const char* kBindNames[BINDS] = {
+    "MoveUp", "MoveDown", "MoveLeft", "MoveRight", "Walk", "CameraUp", "CameraDown", "CameraLeft", "CameraRight", "A", "B",
+    "X", "Y", "L", "R", "ZL", "ZR", "Start", "Select", "DpadUp", "DpadDown", "DpadLeft", "DpadRight", "LeftStickClick",
+    "RightStickClick", "ItemLeft", "ItemRight", "Combo1Key", "Combo2Key", "Combo3Key", "Combo4Key", "Combo5Key",
+    "Combo6Key"};
+constexpr int kBindKeys = 3;  // (three: O and F were both A before there were keybinds, and the right click joins them)
+constexpr int kKeyMouse = 0x1000, kKeyWheelUp = kKeyMouse + 0x10, kKeyWheelDown = kKeyMouse + 0x11;  // (the MHGU port's)
+struct Keybinds {
+    int keys[BINDS][kBindKeys] = {};  // an SDL scancode, kKeyMouse + an SDL mouse button, or the wheel's; 0 none
+    bool operator==(const Keybinds&) const = default;
+};
+Keybinds controls_default_binds();
+// [Keybinds] as mh4u-app.ini has it now (the defaults for a key it lacks), and the text of one keybind's keys for it
+Keybinds controls_read_binds();
+std::string controls_keys_text(const int keys[kBindKeys]);
+// A key's or a mouse button's name, as the file and the settings show it ("" for one without a name)
+std::string controls_key_name(int code);
+// A keyboard with letters and a mouse are connected to the phone (GameActivity.keyboardMouse, asked every 2 s and as a
+// keyboard or a mouse comes or goes): the settings show Keybinds and the mouse's speed only then
+bool controls_keyboard_mouse();
+// The settings choosing a key for a keybind: while on, the next key, mouse button (`mouse`: the pointer on none of the
+// view's rows) or wheel notch is theirs (controls_take_key: its code; 0 Escape or Back, a cancel; -1 nothing yet)
+void controls_capture(bool on, bool mouse);
+int controls_take_key();
 // [Controls] Combo<n>Pad's values, by their index (the settings' Controller button of a combined button), and how many
 // combined buttons there are
 inline constexpr const char* kComboPadKeys[] = {"None",    "L3",      "R3",      "Select",  "Guide",   "Misc",

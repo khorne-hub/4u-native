@@ -477,6 +477,7 @@ namespace plume {
         uint32_t queueIndex = 0;
         std::unordered_set<VulkanSwapChain *> swapChains;
         RenderCommandListType type = RenderCommandListType::UNKNOWN;
+        VkResult lastSubmitResult = VK_SUCCESS; // what the last failed vkQueueSubmit returned (VK_SUCCESS: none failed)
 
         VulkanCommandQueue(VulkanDevice *device, RenderCommandListType type);
         ~VulkanCommandQueue() override;

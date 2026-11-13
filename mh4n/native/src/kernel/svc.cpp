@@ -78,6 +78,8 @@ enum SvcNumber : u32 {
     kGetResourceLimitCurrentValues = 0x3A,
     kBreak = 0x3C,
     kOutputDebugString = 0x3D,
+    kFlushProcessDataCache = 0x54,
+    kControlProcessMemory = 0x70,
     kControlProcess = 0xB3,
 };
 
@@ -310,6 +312,8 @@ void SvcTable::Impl::Dispatch(SvcFrame& f) {
     case kGetResourceLimitCurrentValues: GetResourceLimitValues(f, /*current=*/true); break;
     case kBreak: Break(f); break;
     case kOutputDebugString: OutputDebugString(f); break;
+    case kFlushProcessDataCache: FlushProcessDataCache(f); break;
+    case kControlProcessMemory: ControlProcessMemory(f); break;
     case kControlProcess: ControlProcess(f); break;
     default: LogUnknown(f); break;
     }
@@ -1012,6 +1016,49 @@ void SvcTable::Impl::OutputDebugString(SvcFrame& f) {
     if (hooks.debug_string) {
         hooks.debug_string(text);
     }
+}
+
+void SvcTable::Impl::FlushProcessDataCache(SvcFrame& f) {
+    // r0 process handle, r1 address, r2 size. There are no CPU caches to flush: Azahar answers success for a
+    // process handle. A code mod that makes its own code (Heavenfall's bootstrap) calls it after writing it.
+    RCtx& c = f.ctx;
+    if (!kernel.CurrentProcess()->handle_table.Get<Process>(c.r[0])) {
+        Return(c, kResultInvalidHandle);
+        return;
+    }
+    Return(c, kResultSuccess);
+}
+
+void SvcTable::Impl::ControlProcessMemory(SvcFrame& f) {
+    // r0 process handle, r1 addr0, r2 addr1, r3 size, r4 type, r5 permissions (SVCWrapper's ABI). Only the
+    // operation code mods use is done: PROTECT, which changes the pages' permissions (Heavenfall's bootstrap makes
+    // its pages after the game's data executable with it; the recompiled code and the interpreter run them either
+    // way). MAP and UNMAP would alias guest pages, which flat memory can't do: answered as ControlMemory answers them.
+    RCtx& c = f.ctx;
+    if (!kernel.CurrentProcess()->handle_table.Get<Process>(c.r[0])) {
+        Return(c, kResultInvalidHandle);
+        return;
+    }
+    const u32 addr0 = c.r[1], addr1 = c.r[2], size = c.r[3], type = c.r[4], permissions = c.r[5];
+    if ((addr0 & kPageMask) != 0 || (addr1 & kPageMask) != 0) {
+        Return(c, kResultMisalignedAddress);
+        return;
+    }
+    if ((size & kPageMask) != 0) {
+        Return(c, kResultMisalignedSize);
+        return;
+    }
+    constexpr u32 kMemopProtect = 6;
+    if ((type & 0xFF) == kMemopProtect) {
+        const auto perm = static_cast<MemPerm>(permissions & static_cast<u32>(MemPerm::ReadWrite | MemPerm::Execute));
+        const Result result = memory.Protect(addr0, size, perm);
+        MH4N_LOG(Info, "Kernel.SVC", "ControlProcessMemory: 0x{:08X}+0x{:X} to {}{}{} ({:08X})", addr0, size,
+                 (permissions & 1) ? "r" : "-", (permissions & 2) ? "w" : "-", (permissions & 4) ? "x" : "-", result);
+        Return(c, result);
+        return;
+    }
+    MH4N_LOG(Error, "Kernel.SVC", "ControlProcessMemory type 0x{:X} is not supported", type);
+    Return(c, kResultInvalidCombination);
 }
 
 void SvcTable::Impl::ControlProcess(SvcFrame& f) {

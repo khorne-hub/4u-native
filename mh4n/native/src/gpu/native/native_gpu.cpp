@@ -63,6 +63,7 @@
 #include "gpu/fragment/tables.h"
 #include "gpu/gx/engine.h"
 #include "gpu/native/compose.h"
+#include "gpu/native/hd_textures.h"
 #include "gpu/native/pipeline_builder.h"
 #include "gpu/native/process_memory.h"
 #include "gpu/native/scaled_screens.h"
@@ -771,6 +772,8 @@ struct TexImageKey {
 };
 struct TexImage {
     std::shared_ptr<rhi::Image> image;
+    int hd = -1;  // the HD pack's file the image holds (HdTextures), -1 the game's own texture
+    u32 width = 0, height = 0;  // the image's size (a pack's texture: its file's)
     std::array<u32, 6> generation{};  // of the cache's decoded face the image holds
     u64 bytes = 0;
     u64 stamp = 0;  // the recording that last bound it
@@ -1662,11 +1665,12 @@ private:
         const rhi::Capabilities& caps = backend_->Caps();
         MH4N_LOG(Info, kLog, "device: {} ({})", caps.device_name, caps.driver_name);
         owing_allowed_ = OwingFor(caps);
+        upright_screens_ = UprightFor(caps);
         MH4N_LOG(Info, kLog, "the top screen's hand-over {}", owing_allowed_ ? "may owe the box the next frame clears"
                                                                               : "copies the box the next frame clears (owes nothing)");
         if (!TargetScreensOn()) {
-            MH4N_LOG(Info, kLog, "the top screen is shown from the upright copy (a GPU that owes nothing; MH4N_TARGET_SCREENS=1: "
-                                 "the target's own pictures)");
+            MH4N_LOG(Info, kLog, "the top screen is shown from the upright copy (PowerVR, or a Mali below Vulkan 1.2; "
+                                 "MH4N_TARGET_SCREENS=1: the target's own pictures)");
         }
         profile_ = fragment::ProfileOf(caps);
 
@@ -1729,9 +1733,11 @@ private:
         // pipeline takes (glslang at the SPIR-V chosen, plume), then let go. A refusal names its VkResult. Not on the
         // renderer's thread: glslang's first compile of a vertex and a fragment stage (its built-in tables) took ~200 ms
         // there on the Anbernic, a frame of the start 230 ms longer. (After the provider, which loads the driver's
-        // pipeline cache first.)
-        check_thread_ = std::thread([backend = backend_] {
-            SetHostThreadName("mh4n-check");
+        // pipeline cache first.) With no background compilation (--no-ubershader, the app's choice on a PowerVR, whose
+        // compiler fails building two pipelines at once) it runs here, on the renderer's thread before its first frame:
+        // beside the first frames' pipelines a BXM-8-256 on driver 25.1 aborted inside the driver at every start, in the
+        // check's graphics pipeline or in the first one the renderer built after it.
+        auto check = [backend = backend_] {
             const auto start = std::chrono::steady_clock::now();
             const rhi::Result<void> readback = backend->PrepareReadback();
             std::string graphics;  // (empty: built)
@@ -1763,7 +1769,15 @@ private:
                          !readback.ok() && !graphics.empty() ? " and " : "",
                          !graphics.empty() ? "a graphics pipeline (" + graphics + ")" : std::string());
             }
-        });
+        };
+        if (options_.options.Has("--no-ubershader")) {
+            check();
+        } else {
+            check_thread_ = std::thread([check = std::move(check)] {
+                SetHostThreadName("mh4n-check");
+                check();
+            });
+        }
         rhi::Result<std::unique_ptr<DrawComposer>> composer = DrawComposer::Create(backend_, *provider_);
         if (!composer.ok()) {
             MH4N_LOG(Error, kLog, "composer: {}", composer.error());
@@ -1824,6 +1838,15 @@ private:
                  !cache_config.spot_check ? ", no spot check" : cache_config.rolling_check ? "" : ", no rolling check");
         texture_cache_ = std::make_unique<texture::TextureCache>(host_, cache_config);
         samplers_ = std::make_unique<fragment::sampling::SamplerCache>(backend_);
+        {  // HD texture packs (hd_textures.h): the app's folder of them, else Azahar's place in the user folder
+            std::string packs;
+            if (const char* v = std::getenv("MH4N_TEXTURE_PACKS"); v != nullptr && *v != '\0') {
+                packs = v;
+            } else if (std::optional<std::string> user = options_.options.Get("--user")) {
+                packs = *user + "/load/textures";
+            }
+            hd_.Load(packs);
+        }
 
         vertex::VertexCaps vertex_caps;
         vertex_caps.triangle_fans = caps.triangle_fans;
@@ -2828,20 +2851,33 @@ private:
     }
 
     // ---- screen targets (gpu3; ScreenTarget above) ----
-    // The top screen as the target's own pictures on the GPUs that may owe (OwingAllowed: Mali and Adreno with their own
-    // drivers, Vulkan 1.2 or later), the only ones it was seen to work on. The others copy the box at every hand-over,
-    // and with the touch screen hidden on a wide screen they copied the whole picture: three of those in a row sent the
-    // top screen to the upright copy for 120 transfers, then back to the target's pictures, and so on, and there the
-    // target's pictures were not drawn as the upright copy is (bright or broken frames every few seconds that showing
-    // the touch screen ended, as its costly hand-overs kept the upright copy: 4u-native #31 PowerVR BXM, #33 Mali-G71
-    // r19, #41 Mali-G72). Those GPUs keep the upright copy, which costs them the same copy a frame.
-    // MH4N_TARGET_SCREENS=0: the upright copy always, as before; =1: the target's pictures on any GPU (measurement aids).
+    // The top screen as the target's own pictures, but on the GPUs that keep the upright copy (UprightFor). On a GPU that
+    // owes nothing (OwingAllowed false) every hand-over copies the box, and with the touch screen hidden on a wide screen
+    // it copied the whole picture: three of those in a row sent the top screen to the upright copy for 120 transfers,
+    // then back to the target's pictures, and so on. A PowerVR and the old Malis did not draw the target's pictures as
+    // the upright copy (bright or broken frames every few seconds that showing the touch screen ended, as its costly
+    // hand-overs kept the upright copy: 4u-native #31 PowerVR BXM, #33 Mali-G71 r19 Vulkan 1.1.108, #41 Mali-G72), so
+    // those keep the upright copy, which costs them the same copy a frame. The Adreno drivers below Vulkan 1.2 played
+    // 0.1.7 to 0.1.9 on the target's pictures; given the upright copy in 0.1.9.1, an Adreno 610 (Vulkan 1.1.128) lost its
+    // device after a few minutes (4u-native #47): they, and every other GPU, have the target's pictures again, as before
+    // 0.1.9.1. MH4N_TARGET_SCREENS=0: the upright copy always; =1: the target's pictures on any GPU (measurement aids).
     bool TargetScreensOn() const {
         static const int env = [] {
             const char* v = std::getenv("MH4N_TARGET_SCREENS");
             return v != nullptr && (*v == '0' || *v == '1') ? *v - '0' : -1;
         }();
-        return env < 0 ? owing_allowed_ : env == 1;
+        return env < 0 ? !upright_screens_ : env == 1;
+    }
+    // The GPUs whose top screen stays the upright copy (TargetScreensOn): a PowerVR (its vendor or its driver id), and a
+    // Mali below Vulkan 1.2 or one whose driver doesn't say which it is (no driver properties: older still). A Mali at
+    // Vulkan 1.2 or later owes (OwingFor) and never alternates.
+    static bool UprightFor(const rhi::Capabilities& caps) {
+        constexpr u32 kVendorArm = 0x13B5, kVendorImagination = 0x1010;
+        constexpr u32 kDriverImagination = 7, kDriverArm = 9;  // (VkDriverId)
+        constexpr u32 kVulkan12 = (1u << 22) | (2u << 12);
+        if (caps.vendor_id == kVendorImagination || caps.driver_id == kDriverImagination) return true;
+        const bool mali = caps.vendor_id == kVendorArm || caps.driver_id == kDriverArm;
+        return mali && (caps.api_version < kVulkan12 || caps.driver_id == 0);
     }
     // MH4N_TARGET_SCREENS_CHECK=1 (a measurement aid): the upright copy is drawn as well, and goes with the picture
     // (SharedPicture::Reference) for the app to compare its own turn of the target with it.
@@ -3608,10 +3644,17 @@ private:
                                                : std::string(")")),
                      event.size());
         }
-        if (screen_fallback_logs_ < 8) {
-            ++screen_fallback_logs_;
-            MH4N_LOG(Info, kLog, "a display transfer from 0x{:08x} ({}): its framebuffer is shown from guest memory", input,
-                     why);
+        // (the start's transfers with no target took the 8 lines of every log: a target found stale in the middle of a
+        // game, whose picture would be the framebuffer's old contents for a frame, has 8 lines of its own, with the
+        // frame: a wrong picture for one frame on an Exynos 9810, Discord "A quick glitch in the movement")
+        u32& told = stale != nullptr ? stale_screen_logs_ : screen_fallback_logs_;
+        if (told < 8) {
+            ++told;
+            MH4N_LOG(Info, kLog, "a display transfer from 0x{:08x} ({}): its framebuffer is shown from guest memory{}", input,
+                     why, stale != nullptr ? fmt::format(" (frame {}, the target stale since frame {}: {})",
+                                                         pacing::g_game_frame.load(std::memory_order_relaxed),
+                                                         stale->stale_frame, stale->stale_why)
+                                           : std::string());
         }
         return nullptr;
     }
@@ -4490,6 +4533,7 @@ private:
                 break;
             }
             texture_bytes_ -= it->second.bytes;
+            if (it->second.hd >= 0) hd_.Gone(it->second.bytes);
             backend_->Retire(it->second.image, last_submit_);
             texture_images_.erase(it);
             ++textures_released_;
@@ -4621,6 +4665,35 @@ private:
         return true;
     }
 
+    // An HD pack's texture (hd_textures.h) into its image: as UploadFace up to 4 MB, else in bands of at most 4 MB (the staging
+    // ring has 8: a 2048x2048 texture is 16 MB, a 4096x4096 one 64), the recording submitted between them when the ring is full.
+    bool UploadHd(rhi::Image& image, u32 width, u32 height, const std::vector<u8>& rgba, bool ahead) {
+        constexpr u64 kBand = 4u << 20;
+        const u64 row = static_cast<u64>(width) * 4;
+        if (row * height <= kBand) {
+            return UploadFace(image, 0, width, height, rgba, ahead);
+        }
+        const u32 rows = static_cast<u32>(std::max<u64>(1, kBand / row));
+        for (u32 first = 0; first < height; first += rows) {
+            const u32 count = std::min(rows, height - first);
+            EnsureRecording();
+            composer_->EndPass(*rec_);
+            rhi::Result<void> r =
+                fragment::sampling::UploadRgba8Rows(*rec_, *staging_ring_, image, 0, 0, width, height, first, count, rgba);
+            if (!r.ok()) {
+                FlushRecording();
+                EnsureRecording();
+                r = fragment::sampling::UploadRgba8Rows(*rec_, *staging_ring_, image, 0, 0, width, height, first, count, rgba);
+            }
+            if (!r.ok()) {
+                MH4N_LOG(Error, kLog, "HD texture upload {}x{} (rows {} to {}): {}", width, height, first, first + count, r.error());
+                return false;
+            }
+        }
+        ++frame_.texture_uploads;
+        return true;
+    }
+
     // The image of a texture (one 2D face or the six of a cube), decoded by the cache and uploaded when new or changed.
     // Null when the memory cannot be read or decoded.
     rhi::Image* TextureImage(const std::vector<const texture::TextureRef*>& faces) {
@@ -4693,15 +4766,38 @@ private:
             MH4N_LOG(Info, kLog, "texture {:08x} {}x{} format {}{}: {} us to decode (and hash)", first.paddr, first.width,
                      first.height, static_cast<u32>(first.format), key.cube ? " (cube)" : "", decode_us);
         }
+        // An HD pack's texture for this content (hd_textures.h; 2D textures only). An image holding another content's (or the
+        // game's own) of another size is made again.
+        const HdTextures::Replacement* hd = nullptr;
+        if (hd_.active() && !key.cube) {
+            const texture::CacheKey& k = key.faces[0];
+            const std::size_t bytes = texture::EncodedBytes(k.format, k.width, k.height);
+            if (const u8* memory = host_.PhysicalPointer(k.paddr, static_cast<u32>(bytes)); memory != nullptr) {
+                if (!decoded[0]->rgba8.empty()) {
+                    hd_.Dump(decoded[0]->content_hash, memory, bytes, k.width, k.height, k.format, decoded[0]->rgba8);
+                }
+                hd = hd_.Find(decoded[0]->content_hash, memory, bytes, k.width, k.height, k.format);
+            }
+        }
+        const int hd_file = hd != nullptr ? static_cast<int>(hd->file) : -1;
+        const u32 image_w = hd != nullptr ? hd->width : first.width, image_h = hd != nullptr ? hd->height : first.height;
         auto it = texture_images_.find(key);
+        if (it != texture_images_.end() && it->second.hd != hd_file &&
+            (it->second.width != image_w || it->second.height != image_h || it->second.hd >= 0 || hd_file >= 0)) {
+            texture_bytes_ -= it->second.bytes;
+            if (it->second.hd >= 0) hd_.Gone(it->second.bytes);
+            backend_->Retire(it->second.image, last_submit_);
+            texture_images_.erase(it);
+            it = texture_images_.end();
+        }
         if (it == texture_images_.end() && texture_memory_short_) {
             return nullptr;  // (an image could not be made in this recording: TrimTextures first)
         }
         if (it == texture_images_.end()) {
             rhi::ImageDesc desc;
             desc.format = rhi::Format::Rgba8Unorm;
-            desc.width = first.width;
-            desc.height = first.height;
+            desc.width = image_w;
+            desc.height = image_h;
             desc.cube = key.cube;
             desc.layers = key.cube ? 6 : 1;
             desc.name = key.cube ? "pica cube texture" : "pica texture";
@@ -4728,8 +4824,18 @@ private:
             }
             TexImage entry;
             entry.image = *image;
-            entry.bytes = static_cast<u64>(first.width) * first.height * 4 * faces.size();
+            entry.hd = hd_file;
+            entry.width = image_w, entry.height = image_h;
+            entry.bytes = static_cast<u64>(image_w) * image_h * 4 * faces.size();
             texture_bytes_ += entry.bytes;
+            if (hd_file >= 0) {
+                hd_.Made(entry.bytes);
+                if (hd_.images() % 50 == 1) {
+                    MH4N_LOG(Info, "Memory", "[mem] HD textures: {} images, {} MB of GPU memory (all textures {} MB, up to {} MB "
+                                             "before the least used go)",
+                             hd_.images(), hd_.image_bytes() >> 20, texture_bytes_ >> 20, TextureBudgetBytes() >> 20);
+                }
+            }
             it = texture_images_.emplace(key, std::move(entry)).first;
         }
         TexImage& entry = it->second;
@@ -4752,8 +4858,18 @@ private:
                 }
             }
             const u64 upload_start = NowUs();
-            const bool uploaded = UploadFace(*entry.image, static_cast<u32>(i), first.width, first.height, decoded[i]->rgba8,
-                                             unread_here && entry.stamp == recording_serial_);
+            bool uploaded;
+            if (entry.hd >= 0) {  // (an HD pack's texture: its file's pixels, read now and let go once uploaded)
+                std::vector<u8> pixels;
+                uploaded = hd_.Pixels(*hd, pixels) && UploadHd(*entry.image, entry.width, entry.height, pixels,
+                                                               unread_here && entry.stamp == recording_serial_);
+                if (!uploaded) {
+                    hd_.Refuse(*hd);  // (the next lookup makes the game's own image instead of trying it again each draw)
+                }
+            } else {
+                uploaded = UploadFace(*entry.image, static_cast<u32>(i), first.width, first.height, decoded[i]->rgba8,
+                                      unread_here && entry.stamp == recording_serial_);
+            }
             frame_.upload_us += NowUs() - upload_start;
             if (!uploaded) {
                 return nullptr;
@@ -7392,6 +7508,7 @@ private:
     std::map<TexImageKey, TexImage> texture_images_;
     u64 texture_bytes_ = 0;
     u64 textures_released_ = 0;           // images let go (the budget, the memory short)
+    HdTextures hd_;                       // HD texture packs (hd_textures.h)
     u64 register_triggers_ = 0;           // fills and transfers started by a register write (WriteReg)
     bool texture_memory_short_ = false;   // an image could not be made: TrimTextures at the next recording
     u32 texture_create_failures_ = 0;
@@ -7436,6 +7553,7 @@ private:
     std::vector<u32> tile_vs_, tile_fs_;
     bool tile_pipeline_failed_ = false;
     u32 screen_fallback_logs_ = 0;
+    u32 stale_screen_logs_ = 0;  // (NoteUnscaledScreen: a stale target's, apart)
     // MH4N_SCALE_LOG: what marks targets stale now (StaleWhy), each event's last game frame, the lines written
     const char* stale_why_ = "something else";
     std::map<std::string, u32> scale_seen_;
@@ -7452,6 +7570,7 @@ private:
     bool target_refusal_told_ = false;
     const char* handover_where_ = nullptr;  // (the log's word for a hand-over before a write: Detach)
     bool owing_allowed_ = false;  // (OwingAllowed)
+    bool upright_screens_ = false;  // (UprightFor: the top screen as the upright copy, TargetScreensOn)
     std::thread check_thread_;  // the pipeline check after the device is made (EnsureRenderer), joined by the destructor
     // MH4N_OWED_CHECK: the snapshots taken, the old way's copy of the one being checked, its entry, the totals
     u64 owed_checks_ = 0, owed_compared_ = 0, owed_differ_ = 0;

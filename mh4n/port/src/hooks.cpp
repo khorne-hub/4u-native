@@ -1,5 +1,7 @@
 #include "hooks.h"
 
+#include "game_addr.h"
+#include "onescreen.h"
 #include "swkbd_bridge.h"
 
 #include <algorithm>
@@ -70,16 +72,17 @@ void LogInfo(fmt::format_string<Args...> format, Args&&... args) {
     P().Log(LogLevel::Info, fmt::format(format, std::forward<Args>(args)...));
 }
 
-// USA v1.3.0 addresses and offsets (docs/research/system-services.md, widescreen.md).
-constexpr u32 SMAIN_INSTANCE = 0x01057194;  // sMhMain*: the engine's main system (an sMain)
+// USA v1.3.0 addresses and offsets (docs/research/system-services.md, widescreen.md). The addresses are GameAddrs
+// (game_addr.h, config/port_addresses.txt): another version's library gives each one's address in that version.
+GameAddr SMAIN_INSTANCE{0x01057194};  // sMhMain*: the engine's main system (an sMain)
 constexpr u32 SMAIN_RATE = 0x2c;            // f32: the unit of delta, in frames per second (60)
 constexpr u32 SMAIN_CAP = 0x30;             // f32: frame-rate cap of the frame limiter
 constexpr u32 SMAIN_FPS = 0x34;             // f32: measured frame rate, refreshed each second
 constexpr u32 SMAIN_DELTA = 0x5c;           // f32: last frame's length in 1/rate s
-constexpr u32 VBLANK_TOP = 0x0110d004;      // VBlank counters kept by the GX library
-constexpr u32 VBLANK_BOTTOM = 0x0110d008;
-constexpr u32 FRAMES_SUBMITTED = 0x010571d4;
-constexpr u32 SLTRENDER_INSTANCE = 0x010572cc;
+GameAddr VBLANK_TOP{0x0110d004};      // VBlank counters kept by the GX library
+GameAddr VBLANK_BOTTOM{0x0110d008};
+GameAddr FRAMES_SUBMITTED{0x010571d4};
+GameAddr SLTRENDER_INSTANCE{0x010572cc};
 constexpr u32 SLTRENDER_DISPLAY_SKIP = 0x8aa8;  // u32[2] mDisplaySkip: top, bottom
 // Render settings word: bits set by sLtRender's property setters (0x00bf685c registers them):
 // 0x1 mVSyncEdit, 0x4 mTripleBufferRenderWaitEdit, 0x8 mUpsideToTopEdit, 0x10 mYFlipEdit,
@@ -91,8 +94,8 @@ constexpr u32 RENDER_STEREO = 0x40;             // mULCDEnableEdit: the top scre
 constexpr u32 RENDER_ANTIALIASING = 0x4400;     // mFSAA_2D (0x400) and 0x4000: the game's anti-aliasing
                                                 // (the community's Trinity Disabler clears both; without
                                                 // them the edges are jagged)
-constexpr u32 SAREA_INSTANCE = 0x01057298;      // sMhArea*: the game areas alive (scene-observable.md)
-constexpr u32 SCAMERA_INSTANCE = 0x0105729c;    // sMhCamera*
+GameAddr SAREA_INSTANCE{0x01057298};      // sMhArea*: the game areas alive (scene-observable.md)
+GameAddr SCAMERA_INSTANCE{0x0105729c};    // sMhCamera*
 constexpr u32 SCAMERA_VIEWPORTS = 0x18;         // 8 viewports of 0x1a8 bytes
 constexpr u32 VIEWPORT_SIZE = 0x1a8;
 constexpr u32 VIEWPORT_CAMERA = 0x04;           // uCamera*
@@ -189,6 +192,13 @@ struct Options {
     // after a drink), qol_sharpen_cancel (B while sharpening rolls out of it), qol_rewards_no_limit (the rewards
     // screen's countdown stands still)
     bool qol_hold_gather = false, qol_flex_cancel = false, qol_sharpen_cancel = false, qol_rewards_no_limit = false;
+    // rewards_send_all: choosing "Send to Item Box" on the quest's rewards screen sends every reward that fits at once
+    // (Alfonso's idea, S43; QolRewardsSendAll below), off unless set
+    bool rewards_send_all = false;
+    // single_screen / MH4U_SINGLE_SCREEN: the touch screen's menus drawn on the top screen by the game (onescreen.cpp,
+    // after Heavenfall's arrangement); off unless set
+    bool single_screen = false;
+    bool effects = true;    // effects / MH4U_EFFECTS = off: the game's particle effects are not drawn (Effects below)
     // hud_<part> = dx dy: a part of the hunting HUD moved by this much (top-screen pixels, right and down: the app's
     // layout editor drags it; item_bar is hud_items as an earlier version wrote it)
     float hud_dx[HUD_PART_COUNT] = {}, hud_dy[HUD_PART_COUNT] = {};
@@ -386,6 +396,12 @@ void Set(Options& o, const std::string& key, const std::string& value) {
         o.qol_sharpen_cancel = IsOn(value);
     } else if (key == "qol_rewards_no_limit") {
         o.qol_rewards_no_limit = IsOn(value);
+    } else if (key == "rewards_send_all") {
+        o.rewards_send_all = IsOn(value);
+    } else if (key == "single_screen") {
+        o.single_screen = IsOn(value);
+    } else if (key == "effects") {
+        o.effects = !IsOff(value);
     } else if (key == "trace_state") {
         o.trace_state = IsOn(value) || value == "actions";
         o.trace_state_actions = value == "actions";
@@ -468,7 +484,10 @@ Options LoadOptions(std::vector<std::string>& log) {
         {"MH4U_QOL_HOLD_GATHER", "qol_hold_gather"},
         {"MH4U_QOL_FLEX_CANCEL", "qol_flex_cancel"},
         {"MH4U_QOL_SHARPEN_CANCEL", "qol_sharpen_cancel"},
-        {"MH4U_QOL_REWARDS_NO_LIMIT", "qol_rewards_no_limit"}};
+        {"MH4U_QOL_REWARDS_NO_LIMIT", "qol_rewards_no_limit"},
+        {"MH4U_REWARDS_SEND_ALL", "rewards_send_all"},
+        {"MH4U_SINGLE_SCREEN", "single_screen"},
+        {"MH4U_EFFECTS", "effects"}};
     for (const auto& [var, key] : env) {
         if (const char* value = std::getenv(var)) {
             Set(o, key, value);
@@ -487,7 +506,7 @@ float RefreshRate() {
     return options.fps_cap > 60.0f ? options.fps_cap : 0.0f;
 }
 
-constexpr u32 SVC_SLEEP_THREAD = 0x0010d934;  // nn::svc::SleepThread(s64 ns), r0:r1 (the limiter's own sleep)
+GameAddr SVC_SLEEP_THREAD{0x0010d934};  // nn::svc::SleepThread(s64 ns), r0:r1 (the limiter's own sleep)
 constexpr float NATIVE_REFRESH = 59.831f;     // the 3DS's LCD
 
 #if __has_include("mh4n/pacing_trace.h")
@@ -522,6 +541,8 @@ u64 HostNs() {
 }
 
 /// Calls a game function with r0:r1, its registers left as they were (UpdateFrameTiming's own address as the return).
+GameAddr CALL_GAME_RETURN{0x006442f8};  // the return address the game's functions are called with (updateFrameTiming)
+
 void CallGame64(RCtx* ctx, u32 function, u64 arg) {
     u32 regs[16];
     std::copy(std::begin(ctx->r), std::end(ctx->r), regs);
@@ -530,7 +551,7 @@ void CallGame64(RCtx* ctx, u32 function, u64 arg) {
     ctx->expect_next = 0;
     ctx->r[0] = static_cast<u32>(arg);
     ctx->r[1] = static_cast<u32>(arg >> 32);
-    ctx->r[14] = 0x006442f8;
+    ctx->r[14] = CALL_GAME_RETURN;
     rc_call(ctx, function);
     std::copy(std::begin(regs), std::end(regs), ctx->r);
     ctx->fn = flags[0];
@@ -689,8 +710,11 @@ void UpdateQuestOverlay(RCtx* ctx);
 void UpdateGameState(RCtx* ctx);
 void ItemBarStep(RCtx* ctx);
 void TraceFilters();
+void EffectsApply(RCtx* ctx);
+bool GameFunctionsKnown();  // (EffectsApply's check: the game's vtables hold the functions the port's addresses name)
 bool QolRewardsHold(RCtx* ctx, u32* screen, u32* left, u32* part);  // (jM5557's comforts, below)
 void QolRewardsKeep(RCtx* ctx, u32 screen, u32 left, u32 part);
+void QolRewardsSendAll(RCtx* ctx);  // (Send to Item Box sends every reward, below)
 
 void Frame(RCtx* ctx, RFunc original) {
     PACE_MARK(kFrameStart, static_cast<u32>(frames));
@@ -720,13 +744,18 @@ void Frame(RCtx* ctx, RFunc original) {
         }
     }
     WideTransfer(ctx);
+    EffectsApply(ctx);
     if (const std::string line = Keyboard::Frame(ctx); !line.empty()) LogInfo("{}", line);  // (the phone's keyboard)
+    // (single-screen mode calls two of the game's functions: never with the addresses of another version)
+    if (const std::string line = OneScreen::Frame(ctx, options.single_screen && GameFunctionsKnown()); !line.empty())
+        LogInfo("{}", line);
     u32 rewards = 0, rewards_left = 0, rewards_part = 0;
     const bool rewards_held = QolRewardsHold(ctx, &rewards, &rewards_left, &rewards_part);
     original(ctx);
     if (rewards_held) {
         QolRewardsKeep(ctx, rewards, rewards_left, rewards_part);
     }
+    QolRewardsSendAll(ctx);
     ++frames;
     UpdateQuestOverlay(ctx);
     UpdateGameState(ctx);
@@ -963,6 +992,16 @@ constexpr u32 LAYOUT_TOUCH_SCREEN = 7;          //   (7 the touch screen's: view
 //            drawn while the item has one: found on the phone with trace_layout, the box from the screenshots) and,
 //            with a bow or a bowgun, the coating or the ammo above it (18AFCC8C)
 // A part's box is the union of the boxes of its objects drawn in the last frames (the first of each part when none is).
+// The names behind the hashes are in the layouts (romfs <language>\lyt\quest\ui202, ui203, ui205, ui601: each object's
+// record starts with its name's hash and a pointer to the name): ui202 is the left block (ui202_time the clock,
+// ui202_tairyoku and ui202_stamina the bars, ui202_kireaji the sharpness, ui202_tati 'B2DA1296' the long sword's gauge,
+// ui202_aucher00 and ui202_a_bin the bow's), ui203 the name plates, ui205 the item bar (ui205_archer_base 18AFCC8C the
+// bow's coating). The other weapons' gauges of ui202, all drawn below or beside the sharpness (the layout puts their
+// panes 34 to 107 pixels from the left, 21 to 39 down), and the bowgun's ammo above the item bar (ui205_bowgun_base, in
+// the bow's place) were left where the game puts them in its 400 pixels while the rest went to the edges: a Charge
+// Blade's phials 68 pixels right of the sharpness they belong under (Discord, an Oppo Reno 4 with "HUD at the screen's
+// edges"). They go with their part now (after the measured ones, so HUD_MAP_AREA stays). Not moved: ui202_max
+// (7D586A04: panes at 377 pixels in the layout, on the bars' rows; never seen drawn).
 constexpr int HUD_CLOCK = 0, HUD_BARS = 1, HUD_SHARPNESS = 2, HUD_PARTY = 3, HUD_MAP = 4, HUD_TARGET = 5, HUD_ITEMS = 6;
 // -1 the left side, 1 the right (hud_edges), 0 where the game puts it in its 400 pixels: the map and the target camera,
 // as before they were parts (at the right edge they would be under the touch controls' right thumb)
@@ -995,6 +1034,23 @@ constexpr HudObject HUD_OBJECTS[] = {
     {0x3C598C15, HUD_ITEMS, 273, 223, 377, 238},
     {0x18AFCC8C, HUD_ITEMS, 269, 179, 389, 192},
     {0xD329C787, HUD_ITEMS, 331, 210, 351, 228},  // (the selected item's count, drawn while it has one)
+    // (from the layouts, above: the other weapons' gauges at the sharpness, the Frenzy at the bars, a bowgun's ammo)
+    {0x8D5C9685, HUD_BARS, 0, 0, 0, 0},       // ui202_virus (the Frenzy virus, at the bars' left end)
+    {0x74EDBE16, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_kireaji_down (the sharpness going down)
+    {0x836F2760, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_mushi (the insect glaive's extracts)
+    {0x33733FB2, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_slash_axe (the switch axe's gauge)
+    {0x7F2F0061, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_souken (the dual blades' demon gauge)
+    {0xED4909B6, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_bowgun00 (a bowgun's loaded ammo)
+    {0x9A4E3920, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_bowgun01
+    {0x363B1363, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_hue (the hunting horn's notes)
+    {0x60E2CD34, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_gunlance (its shells)
+    {0xAF07386B, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_guard_axe (the charge blade's phials and shield)
+    {0x506257B6, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_reload (a bowgun's reload)
+    {0x4C5C38E3, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_tamakazu30
+    {0xFBC91CF3, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_b_tama (a bowgun's ammo)
+    {0x81F165C8, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_panel_bin
+    {0xFFC7E011, HUD_SHARPNESS, 0, 0, 0, 0},  // ui202_panel_tama
+    {0x68DBFF2A, HUD_ITEMS, 269, 179, 389, 192},  // ui205_bowgun_base (a bowgun's ammo above the item bar)
 };
 constexpr int HUD_OBJECT_COUNT = static_cast<int>(std::size(HUD_OBJECTS));
 constexpr int HUD_MAP_AREA = 15;  // (HUD_OBJECTS' index of the area objects)
@@ -1058,6 +1114,7 @@ void LayoutObjectConstants(RCtx* ctx, RFunc original) {
     }
     const u32 screen = rd32(ctx, draw + CDRAW_SCREEN) >> 1 & 0x1f;
     const u32 hash = rd32(ctx, object);
+    OneScreen::ObjectConstants(ctx, object, draw, constants, screen);
     if (trace) {
         LogInfo("layout: frame {} object {:08X} hash {:08X} screen {} at {:.1f}, {:.1f}", frames, object,
                 hash, screen, ReadF32(ctx, constants), ReadF32(ctx, constants + 4));
@@ -1126,7 +1183,7 @@ void SetScreenAspect(float aspect, std::vector<std::string>& log) {
 
 // ── Touch panels (docs/research/second-screen.md): tracing, to map panel ids to actions
 // before binding them to buttons.
-constexpr u32 PANEL_MANAGER = 0x0109a350;
+GameAddr PANEL_MANAGER{0x0109a350};
 constexpr u32 PANEL_FLAGS = 0xcc;     // u16: event flags of the last touch (0x0200 tapped)
 constexpr u32 PANEL_ID = 0xce;        // u16: id of the panel touched
 constexpr u32 SMHPAD_INJECTED = 0x3f0;   // u32: gameplay action bits set by panels
@@ -1140,7 +1197,7 @@ u32 last_panel_touch = 0xFFFFFFFF;
 // first, second, off (a monster not yet seen gets the "no" sound). The HUD clears the byte
 // at the end of the same update (0x00b9dfe0), and the game sets it itself from a menu
 // action in one control mode only. sCamera+0xed5 is the result: 0 off, n monster n.
-constexpr u32 QUEST_HUD = 0x0108260c;     // static (getQuestHud 0x0013f230)
+GameAddr QUEST_HUD{0x0108260c};     // static (getQuestHud 0x0013f230)
 constexpr u32 HUD_TARGET_REQUEST = 0x27e;  // u8: toggle the target camera as a tap would
 // The quest HUD's update (0x00b9dfe0) switches on its state: in state 2 (hunting) it runs the
 // panels' state machine (0x00b9ba38) unless the panel manager is busy (0x002a4da0, as it is
@@ -1172,11 +1229,11 @@ constexpr u16 PANEL_TAP_FLAGS = 0x0a00;  // released on the button pressed (0x08
 constexpr u16 PANEL_PRESS_FLAGS = 0x4000;  // pressed on the button
 constexpr u16 PANEL_HELD_FLAGS = 0x1000;   // still on it
 constexpr u32 PANEL_MODE = 0xb1;         // u8: which buttons the touch screen has (the id table)
-constexpr u32 PANEL_ID_TABLES = 0x00df5410;  // u32[4] per mode: the slot of each hit index
+GameAddr PANEL_ID_TABLES{0x00df5410};  // u32[4] per mode: the slot of each hit index
 constexpr u32 PANEL_SLOT_IDS = 0xb4;     // u8[]: the id of the panel in each slot (processTouch 0x00295800)
-constexpr u32 PANEL_TOUCH_ALLOWED = 0x0028f2f0;  // the call processTouch makes with the hit in r5
-constexpr u32 PANEL_PROCESS_TOUCH = 0x002951fc;  // PanelManager::processTouch
-constexpr u32 PANEL_TOUCH_ALLOWED_RETURN = 0x002957a4;  // its return address in processTouch
+GameAddr PANEL_TOUCH_ALLOWED{0x0028f2f0};  // the call processTouch makes with the hit in r5
+GameAddr PANEL_PROCESS_TOUCH{0x002951fc};  // PanelManager::processTouch
+GameAddr PANEL_TOUCH_ALLOWED_RETURN{0x002957a4};  // its return address in processTouch
 // That return address in the running version of the game: Install moves it with processTouch,
 // whose code is the same in the other versions (only where it sits differs)
 u32 panel_touch_allowed_return = PANEL_TOUCH_ALLOWED_RETURN;
@@ -1304,6 +1361,7 @@ void PanelIsTapped(RCtx* ctx, RFunc original) {
 std::atomic<u32> host_triggers{0};  // SetHostTriggers: ZL 0x400 and ZR 0x800, as the held word has them
 
 void ItemBarHold(RCtx* ctx);  // (the item bar by touch, below)
+void LockShotStep(RCtx* ctx, u32 held);  // (a bow's or a bowgun's shot to the monster locked on, below)
 void QolPadStep(RCtx* ctx, u32 pad);  // (jM5557's comforts, below)
 
 void MhPadUpdate(RCtx* ctx, RFunc original) {
@@ -1335,6 +1393,7 @@ void MhPadUpdate(RCtx* ctx, RFunc original) {
     }
     ItemBarHold(ctx);
     QolPadStep(ctx, pad);
+    LockShotStep(ctx, held);
     UpdateSkip(ctx);
     const bool offered = skip_offered.load(std::memory_order_relaxed);
     // the end of the wait: the combo held for skip_end_hold seconds, once per quest
@@ -1403,14 +1462,14 @@ void QuestPlaying(RCtx* ctx, RFunc original) {
 // then runs on an empty stage: the hunter falls into a void and the quest fails. Until its
 // quest is in the list, startQuest is put off a frame and the list released, so that the
 // game builds it again.
-constexpr u32 QUEST_HOLDER = 0x00fbeffc;      // the object that holds the current quest
+GameAddr QUEST_HOLDER{0x00fbeffc};      // the object that holds the current quest
 constexpr u32 QUEST_TABLE = 0xe604;           // holder: u16 quest ids, 0-terminated
 constexpr u32 QUEST_LIST = 0xe608;            // holder: the resources found for them
 constexpr u32 QUEST_LIST_COUNT = 0xe610;
 constexpr u32 RESOURCE_BUFFER = 0x64;         // resource: its file contents
-constexpr u32 QUEST_FLOW_PARAMS = 0x00edbe90; // [this]+0x9788: what 0x00b7c010 starts
-constexpr u32 QUEST_LIST_RELEASE = 0x006bc838;
-constexpr u32 QUEST_START = 0x00b7c010;
+GameAddr QUEST_FLOW_PARAMS{0x00edbe90}; // [this]+0x9788: what 0x00b7c010 starts
+GameAddr QUEST_LIST_RELEASE{0x006bc838};
+GameAddr QUEST_START{0x00b7c010};
 constexpr u32 QUEST_HOLD_MAX_FRAMES = 600;
 
 /// The quest id 0x00b7c010 is about to set up (its three branches), or 0.
@@ -1515,7 +1574,7 @@ void StartQuest(RCtx* ctx, RFunc original) {
 // set (if it wasn't at the start), and for 25 seconds at most: quests that end at once (the
 // arena, training) leave the status as it was without a wait.
 constexpr u32 QUEST_STATUS = 0xad24;             // u8 in the quest holder
-constexpr u32 GAME_CONTROL = 0x00fb6b7c;         // sGameControl*
+GameAddr GAME_CONTROL{0x00fb6b7c};         // sGameControl*
 constexpr u32 GAME_CONTROL_RETURN_DUE = 0x2f89;  // u8: the wait is over
 constexpr double SKIP_MOST_SECONDS = 25.0;
 bool skip_complete = false;     // last frame: the quest complete
@@ -1569,7 +1628,7 @@ void UpdateSkip(RCtx* ctx) {
 // one shape only, two slots tall. With quest_overlay, the touch screen in the corner of
 // the custom layout shows the map alone while the panels are up, and with target_overlay the
 // target camera panel in a view of its own beside it.
-constexpr u32 QUEST_PANELS = 0x01082cec;  // (getter 0x001287a4)
+GameAddr QUEST_PANELS{0x01082cec};  // (getter 0x001287a4)
 constexpr u32 PANEL_TYPES = 0x7a;         // u16 per slot
 constexpr u32 PANEL_HIDDEN = 0xb1;        // u8: a bit per slot covered by the panel before it
 constexpr u32 PANEL_SLOTS = 6;
@@ -1734,11 +1793,11 @@ void UpdateQuestOverlay(RCtx* ctx) {
 // community's "bloom off" cheat for MH4G writes a `bx lr` over the start of bloom's render).
 // Classes are told apart by their vtable, since some share a render function.
 struct ScreenFilter {
-    u32 vtable;        // USA v1.3.0
+    GameAddr vtable;   // USA v1.3.0's (game_addr.h)
     const char* name;  // in the log
     u32 option;        // the FILTER_* bit that turns it off, 0 none
 };
-constexpr ScreenFilter SCREEN_FILTERS[] = {
+ScreenFilter SCREEN_FILTERS[] = {
     {0x00e5e7f4, "bloom", FILTER_BLOOM},
     {0x00e624d0, "motion blur", FILTER_MOTION_BLUR},
     {0x00e5bafc, "depth of field", FILTER_DEPTH_OF_FIELD},
@@ -1789,6 +1848,59 @@ std::string FilterNames(u32 bits) {
     }
     return names.empty() ? "none" : names;
 }
+
+// ── Effects (1.0's S27: an option to turn the particles and effects off; players who turn it off lose the
+// effects that warn of an attack too, the owner's call). The engine's effects are units of a few classes (the DTI
+// table, config/mt_classes.tsv: uEffect and its subclasses uMhEffect, uMhStageEft, uCameraEffect, and uSimpleEffect,
+// uMhSimpleEffect), each drawn by the scene through render(this, cDraw*), virtual slot 12 (+0x30), as the screen filters
+// are; their particles (cParticleGenerator*) are drawn from there. Off, that slot of each class's vtable points at
+// uFilter's empty render (`bx lr`, 0x00627bd8): the effects still play (their sounds, timing and what they do to the
+// game), nothing of them is drawn. The game's code reads the slot from memory at every call, so the change applies at
+// once, and On writes the original back. A vtable that holds neither value (another version or region of the game) is
+// left alone and logged once. The vtables were found as the filters' (screen-filters.md: slot 5 of a class's vtable is
+// its getDTI), USA v1.3.0.
+struct EffectClass {
+    GameAddr vtable;   // USA v1.3.0's (game_addr.h), as the screen filters'
+    GameAddr render;   // its slot 12, as the game has it
+    const char* name;  // in the log
+};
+GameAddr EMPTY_RENDER{0x00627bd8};  // uFilter::render: bx lr
+EffectClass EFFECT_CLASSES[] = {
+    {0x00e6b990, 0x00affcb4, "uEffect"},
+    {0x00e6d12c, 0x00affcb4, "uMhEffect"},
+    {0x00e5d8dc, 0x00affcb4, "uMhStageEft"},
+    {0x00e5f5e8, 0x00affcb0, "uCameraEffect"},
+    {0x00e60168, 0x00339890, "uSimpleEffect"},
+    {0x00e618fc, 0x00339890, "uMhSimpleEffect"},
+};
+int effects_applied = -1;  // (the state written: 1 drawn, 0 left out, -1 not yet)
+bool effects_unknown = false;
+
+void EffectsApply(RCtx* ctx) {
+    const int want = options.effects ? 1 : 0;
+    if (want == effects_applied || effects_unknown) {
+        return;
+    }
+    for (const EffectClass& e : EFFECT_CLASSES) {
+        const u32 slot = rd32(ctx, e.vtable + 0x30);
+        if (slot != e.render && slot != EMPTY_RENDER) {
+            effects_unknown = true;
+            LogInfo("effects: {}'s vtable {:08x} holds {:08x} where {:08x} was expected (another version of the game): "
+                    "the Effects option does nothing", e.name, u32{e.vtable}, slot, u32{e.render});
+            return;
+        }
+    }
+    for (const EffectClass& e : EFFECT_CLASSES) {
+        wr32(ctx, e.vtable + 0x30, want ? u32{e.render} : u32{EMPTY_RENDER});
+    }
+    LogInfo("effects: the game's particle effects {} ({} classes)", want ? "drawn" : "left out", std::size(EFFECT_CLASSES));
+    effects_applied = want;
+}
+
+// false for a library of another version made without its addresses (EUR v1.1.0 made before 1.0): the vtables EffectsApply
+// checks (at the first frame, before single-screen mode's step) don't hold what the port's addresses say, so
+// single-screen mode, which calls two of the game's functions, stays off
+bool GameFunctionsKnown() { return !effects_unknown; }
 
 /// Once a frame with trace_filters: the filters drawn and skipped over the last second, logged
 /// when they change (a filter can draw every other frame, so a frame alone says too little).
@@ -1854,21 +1966,22 @@ u32 AddPitch(u32 pitch, int delta) {
 constexpr u32 AREA_COUNT = 0x3818, AREA_TABLE = 0x3820;  // sArea: the areas alive, topmost last
 constexpr u32 VT_AINIT = 0x00e64d94, VT_AGAMESYS = 0x00e6c100, VT_ADEMO = 0x00e64d5c,
               VT_ANEWGAME = 0x00e6c138, VT_ACONTINUE = 0x00e6c778, VT_AVILLAGE = 0x00e6c170,
-              VT_AQUEST = 0x00e655c8, VT_AARENA = 0x00e650bc;  // the areas' classes (their vtables)
-constexpr u32 LOBBY = 0x00edbe90;          // cLbMain*: the towns' controller (null in quests)
-constexpr u32 VT_CLBMAIN = 0x00e6b544;
+              VT_AQUEST = 0x00e655c8, VT_AARENA = 0x00e650bc;  // USA v1.3.0's (UpdateGameState switches on
+              // UsaAddress of the scene's vtable); the areas' classes (their vtables)
+GameAddr LOBBY{0x00edbe90};          // cLbMain*: the towns' controller (null in quests)
+GameAddr VT_CLBMAIN{0x00e6b544};
 constexpr u32 LOBBY_BUSY = 0x225;          // u8: 1 while a menu, a talk or the map has the buttons
 constexpr u32 LOBBY_PANEL = 0x172d5;       // u8: the touch screen's page (GameState::town_panel)
-constexpr u32 SPLAYER = 0x00fb83e8;        // sPlayer*
+GameAddr SPLAYER{0x00fb83e8};        // sPlayer*
 constexpr u32 SPLAYER_UNITS = 0xa98;       // uPlayer*[4], by player number
 constexpr u32 GAME_CONTROL_PLAYER = 0x2f;  // s8: this console's player number
 constexpr u32 GAME_CONTROL_NO_UNITS = 0x5a;  // u8: 1 where sPlayer has no units (the towns)
 // The game's own "is a menu open" (0x005e7144, asked by the touch panels and the quest HUD): the START
 // menu's byte, four window bits beside it, and in a town or a quest a byte of the quest HUD's
-constexpr u32 GAME_MENU = 0x0108b9bc;      // (its getter 0x0012580c)
+GameAddr GAME_MENU{0x0108b9bc};      // (its getter 0x0012580c)
 constexpr u32 GAME_MENU_OPEN = 0x04;       // u8: the START menu is up (in towns and quests alike)
 constexpr u32 GAME_MENU_WINDOWS = 0x1e;    // u16: bits 0-3
-constexpr u32 HUD_MENU_PANEL = 0x01083858; // u8 (0x00b89288 reads it)
+GameAddr HUD_MENU_PANEL{0x01083858}; // u8 (0x00b89288 reads it)
 constexpr u32 GAME_CONTROL_MODE = 0x2b;    // u8: 1 a quest, 2 a town, 3 the Arena's equipment
 // Whether the weapon is out: a byte of the hunter's state object ([hunter+0xe30], the one camera.md
 // calls its input object), which the hunter's virtual 50 (0x00b2a598) sets and 0x00b084d0 tests for 1
@@ -1878,7 +1991,7 @@ constexpr u32 HUNTER_ACTION = 0x244;       // u16: the hunter's action (its virt
 constexpr u32 STATE_WEAPON_OUT = 0x6f9;    // u8: 1 out, 0 sheathed
 // The hunter's class, uWeapon00..14 in the game's weapon numbers (no 05 and 06): the vtables, from
 // each class's getDTI (virtual 5) in config/mt_classes.tsv. 4 is both bowguns, 10 the bow.
-constexpr u32 WEAPON_VTABLES[15] = {0x00e6edbc, 0x00e6ef2c, 0x00e6f09c, 0x00e6f20c, 0x00e6f37c, 0, 0,
+GameAddr WEAPON_VTABLES[15] = {0x00e6edbc, 0x00e6ef2c, 0x00e6f09c, 0x00e6f20c, 0x00e6f37c, 0, 0,
                                     0x00e6f4ec, 0x00e6f65c, 0x00e6f7cc, 0x00e6f93c, 0x00e6faac,
                                     0x00e6fc1c, 0x00e6fd8c, 0x00e6fefc};
 constexpr int WEAPON_BOWGUN = 4, WEAPON_BOW = 10;
@@ -1987,13 +2100,13 @@ u32 CallGame(RCtx* ctx, u32 function, std::initializer_list<u32> args) {
 constexpr u32 HUNTER_ITEMS = 0xa29c;        // the hunter's item info*
 constexpr u32 ITEMS_SLOT = 0x584;           // u16: the selected pouch slot
 constexpr u32 ITEMS_TURN = 0x589;           // u8: bit 1 turned left, bit 2 right (the bar's animation)
-constexpr u32 FN_ITEM_NEXT = 0x00b31fa4;    // (hunter, slot, 0 left / 1 right): the next slot with an item
-constexpr u32 FN_IS_LOCAL = 0x00d04f6c;     // (hunter): nonzero for this console's hunter
-constexpr u32 FN_PLAY_SOUND = 0x00312928;   // (the sound manager, sound)
-constexpr u32 SOUND_MANAGER = 0x00fccd6c;   // its pointer
+GameAddr FN_ITEM_NEXT{0x00b31fa4};    // (hunter, slot, 0 left / 1 right): the next slot with an item
+GameAddr FN_IS_LOCAL{0x00d04f6c};     // (hunter): nonzero for this console's hunter
+GameAddr FN_PLAY_SOUND{0x00312928};   // (the sound manager, sound)
+GameAddr SOUND_MANAGER{0x00fccd6c};   // its pointer
 constexpr u32 SOUND_ITEM_TURN = 7;
-constexpr u32 FN_HOLDER_ASK = 0x006b3fe0;   // (holder, 5): nonzero, no item now
-constexpr u32 FN_HOLDER_ENDING = 0x006b3c84;  // (holder): nonzero, no item now
+GameAddr FN_HOLDER_ASK{0x006b3fe0};   // (holder, 5): nonzero, no item now
+GameAddr FN_HOLDER_ENDING{0x006b3c84};  // (holder): nonzero, no item now
 constexpr u32 STATE_MODE = 0x371;           // u8 of the hunter's state object: 8 and 9, and 6 with
 constexpr u32 STATE_MODE_ACTION = 0x372;    //   u16 0x1a here, close the bar; 0 with 0x78 or 0x79 too
 constexpr s64 ITEM_STEP_KEEP = 600'000'000; // ns a step the hunter can't take now waits (a swing, a roll)
@@ -2098,12 +2211,12 @@ constexpr u32 STATE_REST_MODE = 0x370;         // u8 of the hunter's state objec
 constexpr u16 ACTION_NEUTRAL = 0x00, ACTION_NEUTRAL_MOVING = 0x18;  // (mode 0: standing, and walking)
 constexpr u16 ACTION_FLEX = 0x57;              // (mode 0) the flex after a drink
 constexpr u16 ACTION_SHARPEN = 0x5a;           // (mode 0) sharpening with a whetstone
-constexpr u32 FN_SET_ACTION = 0x00b1d764;      // (hunter, mode, 4, 0; a fifth argument on the stack, 0): the mode's
+GameAddr FN_SET_ACTION{0x00b1d764};      // (hunter, mode, 4, 0; a fifth argument on the stack, 0): the mode's
                                                // neutral action, as their patches end the flex or the sharpening
-constexpr u32 FN_FACE_STICK = 0x00b3d0d8;      // (hunter): turn to the circle pad (their patch, when it is pushed)
-constexpr u32 FN_AFTER_SET_ACTION = 0x00b67070;  // (hunter): their patch's call after FN_SET_ACTION
-constexpr u32 FN_ROLL_REFUSED = 0x00b185c8;    // (hunter): nonzero where the hunter can't roll now
-constexpr u32 FN_ROLL = 0x00b0d734;            // (hunter): the roll
+GameAddr FN_FACE_STICK{0x00b3d0d8};      // (hunter): turn to the circle pad (their patch, when it is pushed)
+GameAddr FN_AFTER_SET_ACTION{0x00b67070};  // (hunter): their patch's call after FN_SET_ACTION
+GameAddr FN_ROLL_REFUSED{0x00b185c8};    // (hunter): nonzero where the hunter can't roll now
+GameAddr FN_ROLL{0x00b0d734};            // (hunter): the roll
 // The gathering actions (mode 0): carving, gathering, mining and catching bugs (their patch's table of actions)
 constexpr u16 GATHER_ACTIONS[] = {0x4d, 0x4e, 0x51, 0x52, 0x53, 0x54, 0x8f, 0x90, 0x94, 0x95, 0x96, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac};
 bool qol_gathering = false;     // the hunter was gathering with a button held (their patch's first flag)
@@ -2223,7 +2336,7 @@ void QolPadStep(RCtx* ctx, u32 pad) {
 // countdown is held at a value in the middle of its second, set before the game's frame and put back after it, so the
 // one or two units a frame takes off never change the number shown (held on the second's edge, it showed 180 and 179
 // in turns on the RG406V).
-constexpr u32 REWARDS_SCREEN = 0x00ef32b4;  // the rewards screen's object*
+GameAddr REWARDS_SCREEN{0x00ef32b4};  // the rewards screen's object*
 constexpr u32 REWARDS_STATE = 0x04;   // s8
 constexpr u32 REWARDS_LEFT = 0x14;    // s32: the countdown
 constexpr u32 REWARDS_PART = 0x18;    // f32: the part of a unit gathered
@@ -2271,6 +2384,117 @@ void QolRewardsKeep(RCtx* ctx, u32 screen, u32 left, u32 part) {
     }
 }
 
+// ── "Send to Item Box" sends every reward at once (Alfonso's idea for MHGU, S43; the same in both ports) ──
+//
+// The rewards screen (REWARDS_SCREEN, its update 0x00acccd0) shows the quest's rewards in its states 1 and 2 (+4: the
+// main list at +0x4a, the second at +0x10a; 48 slots of {u16 item, s16 count}, 8 a row). In each, sub-state 1 (+5) is
+// its menu, Take Items / Send to Item Box / Sell Items & Exit (the cursor +6, 0..2); A there sets the sub-state to the
+// cursor + 2 (0x00acd660), so 3 is Send to Item Box: from then on each A sends the reward under the cursor (+0x1ca
+// column, +0x1cb row) to the item box (0x00acd968):
+//   0x00af7954([0x00fb83e8]) is not 0 (nothing happens otherwise);
+//   n = 0x00c1daa0(box, box + 0x5c); fits = 0x00c20540(box, item, box + 0x1ba, n), with box = [0x00fcf7ec];
+//   an item whose entry in the item table (0x00f029e4, 20 bytes each) has bit 0x10 of +2: 0x00abfbe8(screen, slot);
+//   else, if it fits: 0x00ab8b9c(screen, item), then left = 0x00c1ea00(box, item, count, out): 0 the slot is cleared,
+//   else its count becomes left; if it does not fit: sound 3 and the slot stays;
+//   sound 0x1f, and once 0x00ab4b10(screen, 0 / 1) says the list is empty: sub-state 1, cursor 2 (+9 = 1, redraw).
+// Here, after the game's frame that entered sub-state 3, that same step runs for every slot of the list, in order, with
+// the game's own calls (the box's room, what does not fit stays in the list, the item's own handling for those with bit
+// 0x10), and the sound once. Emptied, the screen goes back to its menu as after the last A; with rewards left (the box
+// full for them) it stays in Send to Item Box, as the game leaves it, so they can be seen and taken another way. The
+// same writes the game makes: the box and the save change exactly as with one A a reward. jM5557's "Send All Rewards To
+// Item Box (Hold X+Y)" code mod showed where this lives; this runs the game's own step instead.
+constexpr u32 REWARDS_SUBSTATE = 0x05;     // s8: 1 the menu, 2 Take Items, 3 Send to Item Box, 4 Sell Items & Exit
+constexpr u32 REWARDS_CURSOR = 0x06;       // s8: the menu's row
+constexpr u32 REWARDS_REDRAW = 0x09;       // u8: 1 the screen's parts are laid out again
+constexpr u32 REWARDS_LIST_MAIN = 0x4a, REWARDS_LIST_SECOND = 0x10a;  // 48 x {u16 item, s16 count}
+constexpr u32 REWARDS_SLOTS = 48;
+constexpr s8 REWARDS_SEND_TO_BOX = 3;
+// (the game's addresses through GameAddr, listed in config/port_addresses.txt: they map in the other versions too)
+const GameAddr& REWARDS_HUNTERS = SPLAYER;     // sPlayer*: FN_REWARDS_HAS_HUNTER(it) is 0 when there is nobody to give items to
+GameAddr FN_REWARDS_HAS_HUNTER{0x00af7954};
+GameAddr ITEM_BOX_OWNER{0x00fcf7ec};           // the item box's owner*
+GameAddr FN_BOX_ROOM{0x00c1daa0};              // (box, box + 0x5c)
+GameAddr FN_BOX_FITS{0x00c20540};              // (box, item, box + 0x1ba, room): 0 it does not fit
+GameAddr FN_BOX_ADD{0x00c1ea00};               // (box, item, count, out*): what did not go in
+GameAddr ITEM_TABLE{0x00f029e4};               // 20 bytes an item; +2 bit 0x10: an item the screen handles itself
+GameAddr FN_REWARD_SPECIAL{0x00abfbe8};        // (screen, slot*)
+GameAddr FN_REWARD_TAKEN{0x00ab8b9c};          // (screen, item)
+GameAddr FN_REWARDS_EMPTY{0x00ab4b10};         // (screen, 0 main / 1 second): 1 the list is empty
+constexpr u32 SOUND_REWARD_SENT = 0x1f;
+u32 rewards_sent_screen = 0;  // the screen whose Send to Item Box was handled (0: none since it was left)
+
+void QolRewardsSendAll(RCtx* ctx) {
+    const u32 screen = rd32(ctx, REWARDS_SCREEN);
+    const s8 state = HeapPointer(screen) ? static_cast<s8>(rd8(ctx, screen + REWARDS_STATE)) : 0;
+    const s8 sub = (state == 1 || state == 2) ? static_cast<s8>(rd8(ctx, screen + REWARDS_SUBSTATE)) : 0;
+    if (options.trace_state) {  // (which of the screen's states a quest's end goes through)
+        static s8 seen_state = 0, seen_sub = 0;
+        const s8 any_sub = HeapPointer(screen) ? static_cast<s8>(rd8(ctx, screen + REWARDS_SUBSTATE)) : 0;
+        if (state != seen_state || any_sub != seen_sub) {
+            LogInfo("rewards screen: state {} sub-state {} (frame {})", state, any_sub, frames);
+            seen_state = state, seen_sub = any_sub;
+        }
+    }
+    if (sub != REWARDS_SEND_TO_BOX) {
+        rewards_sent_screen = 0;  // (left: choosing it again runs again)
+        return;
+    }
+    if (!options.rewards_send_all || rewards_sent_screen == screen ||
+        CallGame(ctx, FN_REWARDS_HAS_HUNTER, {rd32(ctx, REWARDS_HUNTERS)}) == 0) {
+        return;
+    }
+    rewards_sent_screen = screen;
+    const u32 list = screen + (state == 1 ? REWARDS_LIST_MAIN : REWARDS_LIST_SECOND);
+    // 0x00c1ea00's out* is a place in its caller's frame: a block below the guest's stack, the pointer put back after
+    const u32 sp = ctx->r[13];
+    const u32 out = (sp - 0x200) & ~7u;
+    ctx->r[13] = out;
+    int sent = 0, kept = 0, special = 0;
+    for (u32 i = 0; i < REWARDS_SLOTS; ++i) {
+        const u32 slot = list + 4 * i;
+        const u16 item = rd16(ctx, slot);
+        if (item == 0) {
+            continue;
+        }
+        const u32 room = CallGame(ctx, FN_BOX_ROOM, {rd32(ctx, ITEM_BOX_OWNER), rd32(ctx, ITEM_BOX_OWNER) + 0x5c});
+        const u32 box = rd32(ctx, ITEM_BOX_OWNER);
+        const u32 fits = CallGame(ctx, FN_BOX_FITS, {box, item, box + 0x1ba, room});
+        if (rd8(ctx, ITEM_TABLE + 20u * item + 2) & 0x10) {
+            CallGame(ctx, FN_REWARD_SPECIAL, {screen, slot});
+            ++special;
+            continue;
+        }
+        if (fits == 0) {
+            ++kept;
+            continue;
+        }
+        CallGame(ctx, FN_REWARD_TAKEN, {screen, item});
+        const s16 count = static_cast<s16>(rd16(ctx, slot + 2));
+        const u32 left =
+            CallGame(ctx, FN_BOX_ADD, {rd32(ctx, ITEM_BOX_OWNER), item, static_cast<u32>(static_cast<s32>(count)), out});
+        if (left == 0) {
+            wr16(ctx, slot, 0);
+            wr16(ctx, slot + 2, 0);
+        } else {
+            wr16(ctx, slot + 2, static_cast<u16>(left));
+            ++kept;
+        }
+        ++sent;
+    }
+    ctx->r[13] = sp;
+    if (sent + special > 0) {
+        CallGame(ctx, FN_PLAY_SOUND, {rd32(ctx, SOUND_MANAGER), SOUND_REWARD_SENT});
+    }
+    const bool empty = CallGame(ctx, FN_REWARDS_EMPTY, {screen, state == 1 ? 0u : 1u}) != 0;
+    if (empty) {
+        wr8(ctx, screen + REWARDS_SUBSTATE, 1);
+        wr8(ctx, screen + REWARDS_CURSOR, 2);
+    }
+    wr8(ctx, screen + REWARDS_REDRAW, 1);
+    LogInfo("qol: Send to Item Box sent {} rewards at once ({} handled by the game's own step), {} left in the {} list{}",
+            sent, special, kept, state == 1 ? "main" : "second", empty ? ": back to the menu" : "");
+}
+
 std::string FormatGameState(const GameState& s) {
     constexpr const char* places[] = {"other", "town", "quest"};
     std::string text = fmt::format("place {}{} menu {} weapon {} drawn {} action {:04X} ranged {} item bar ",
@@ -2295,7 +2519,7 @@ void UpdateGameState(RCtx* ctx) {
     const u32 top = count >= 1 && count <= 8 ? rd32(ctx, areas + AREA_TABLE + 4 * (count - 1)) : 0;
     const u32 scene = HeapPointer(top) ? rd32(ctx, top) : 0;
     bool hold = false;  // between areas: the menu as it was
-    switch (scene) {
+    switch (UsaAddress(scene)) {  // (the cases are USA v1.3.0's vtables)
     case VT_AVILLAGE: {
         s.place = GameState::PLACE_TOWN;
         const u32 lobby = rd32(ctx, LOBBY);
@@ -2348,8 +2572,8 @@ void UpdateGameState(RCtx* ctx) {
             s.action = rd16(ctx, hunter + HUNTER_ACTION);
             if (options.trace_panels) {  // (what tells a window over the hunt: the HUD's state, the hunter's +0x54c)
                 static u32 last = ~0u;
-                const u32 key = hud | rd8(ctx, hunter + 0x54c) << 8 | rd8(ctx, 0x0108b9c0) << 16 |
-                                (rd16(ctx, 0x0108b9da) & 0xf) << 20 | rd8(ctx, 0x01083858) << 24;
+                const u32 key = hud | rd8(ctx, hunter + 0x54c) << 8 | rd8(ctx, GAME_MENU + 4) << 16 |
+                                (rd16(ctx, GAME_MENU + 0x1e) & 0xf) << 20 | rd8(ctx, HUD_MENU_PANEL) << 24;
                 if (key != last) {
                     LogInfo("state: frame {} hud {} hunter+54c {} menu bytes {} {} {} action {:04X}", s.frame, hud,
                             key >> 8 & 0xff, key >> 16 & 0xf, key >> 20 & 0xf, key >> 24, s.action);
@@ -2458,7 +2682,7 @@ void UpdateGameState(RCtx* ctx) {
     }
 }
 
-// ── The lock-on (the app's touch controls: a long press on L; a controller's right stick click) ──
+// ── The lock-on (the app's touch controls: the Lock-on button; a controller's right stick click) ──
 //
 // While it is on, the quest camera turns toward a large monster every frame, eased, as in the newer
 // games (the MHGU port's hle/mousecam.c), from the same hook as the mouse. The monster is the one the
@@ -2466,14 +2690,16 @@ void UpdateGameState(RCtx* ctx) {
 // nearest large monster; only one in the hunter's area of the map and not dead, as the game's own L to
 // the target (0x00bff694) asks. The angles are the game's (0x00c040fc, the camera's turn to its target):
 // the yaw of the vector from the monster to the hunter, the pitch toward the monster from 170 units above
-// the hunter's feet. A turn by hand (the drag, the C-stick, the D-pad) stops the following for a moment.
-constexpr u32 SENEMY = 0x00f32004;         // sEnemy*: 32 monster slots at +0x18 (0x0068fb9c)
+// the hunter's feet. A turn by hand (the drag, the C-stick, the D-pad) stops the following for a moment. With no
+// monster to follow (another area, too far, a cart to camp) it stays on and waits, as the MHGU port's lock-on.
+GameAddr SENEMY{0x00f32004};         // sEnemy*: 32 monster slots at +0x18 (0x0068fb9c)
+
 constexpr u32 ENEMY_SLOTS = 0x18, ENEMY_SLOT_COUNT = 32;
 constexpr u32 EM_INFO = 0xe28;             // monster: its status block
 constexpr u32 INFO_KIND = 0x1c0;           // u8: its row of the monster table
 constexpr u32 INFO_AREA = 0x14c;           // u8: the area of the map it is in
 constexpr u32 INFO_STATE = 0x1ca;          // u8: 0xb, 0xe dead; 0xc with +0x1cb 0xff captured (0x0094d770)
-constexpr u32 MONSTER_TABLE = 0x00f3a020;  // [[[[table] + 4*kind]]]: bit 0 a large monster (0x0068882c)
+GameAddr MONSTER_TABLE{0x00f3a020};  // [[[[table] + 4*kind]]]: bit 0 a large monster (0x0068882c)
 constexpr u32 UNIT_POSITION = 0xd00;       // a unit's place (x, y, z floats; fps-observables.md)
 constexpr u32 HUNTER_POINT = 0x10;         // [hunter+0xe30]+0x10: the hunter's place, as the camera reads it
 constexpr u32 GAME_CONTROL_AREA = 0xc90;   // u32: the hunter's area of the map
@@ -2589,12 +2815,13 @@ void LockOnStep(RCtx* ctx, u32 camera, u32 input, bool turned_by_hand) {
                 hz = ReadF32(ctx, state + HUNTER_POINT + 8);
     const u32 monster = LockTarget(ctx, camera, hx, hz);
     if (monster != lock_monster) {
-        LogInfo("lock-on: {}", monster ? fmt::format("monster {:08X}", monster) : std::string("no monster to follow"));
+        LogInfo("lock-on: {}", monster ? fmt::format("monster {:08X}", monster)
+                                       : std::string("no monster to follow (still on: it waits for one)"));
         lock_monster = monster;
     }
-    if (monster == 0) {  // (the target gone, the hunter carted to camp: the lock lets go, never left on with nothing)
-        lock_on.store(false, std::memory_order_relaxed);
-        LogInfo("lock-on: off (no monster to follow)");
+    if (monster == 0) {  // (none here now: in another area, too far, the hunter carted to camp. The lock-on stays on and
+                         // the camera follows again once one is back, as the MHGU port's; the button, a controller's
+                         // right stick click, the settings and the quest's end turn it off)
         return;
     }
     const float mx = ReadF32(ctx, monster + UNIT_POSITION), my = ReadF32(ctx, monster + UNIT_POSITION + 4),
@@ -2626,6 +2853,98 @@ void LockOnStep(RCtx* ctx, u32 camera, u32 input, bool turned_by_hand) {
     }
     for (const u32 field : {RIG_PITCH, RIG_PITCH_NOW}) {
         wr32(ctx, rig + field, AddPitch(rd32(ctx, rig + field), pitch));
+    }
+}
+
+// ── A shot with the lock-on on (S15 of 1.0: "the bow as the bowguns"), the MHGU port's (hle/mousecam.c mousecam_lock_shot):
+// a bow's draw (X, held: let go, it shoots) and a bowgun's shot (A) with the weapon out turn the hunter to the monster the
+// lock-on follows, from the press until a moment after the button is let go, so the arrow or the shell leaves toward it.
+// The player's own aim (R held: a gun's aim, a bow's aiming mode), crouching fire and a bow's coating (X + A), a dodge (B),
+// a sheathe (Y) and a turn of the camera by hand meanwhile are left alone. The facing: a u16 in the camera's units at
+// hunter+0xa350, which the game takes (written, the hunter turns round: MH4N_TEST_FACE_SPIN=a350 on the PC runner, the
+// steppe's field script, 2026-11-13; +0xd24 and +0xe5c, docs/research/game-state.md's "For locked shots", are copies the
+// game makes from it every frame: spun alone, they turned nothing and read the facing again at the next frame). Toward
+// the monster it is atan2(mx - hx, mz - hz). Each update of the game's pad (sMhPad::update: before the hunter reads it)
+//   MH4N_TEST_FACE_SPIN=<hex offsets, comma separated>: (tests) those u16s of the local hunter turned by 1/64 of a turn
+//                       each frame in a quest, whatever the weapon, and logged every second: the one that is the facing
+//                       turns the hunter round where it stands. MH4N_TEST_FACE_SPIN_FROM=<frame>: from that frame on
+constexpr u32 HUNTER_FACING = 0xa350, HUNTER_FACING_COPY = 0xd24, HUNTER_FACING_COPY2 = 0xe5c;
+constexpr u32 SHOT_A = 0x2000, SHOT_B = 0x4000, SHOT_X = 0x1000, SHOT_Y = 0x8000, SHOT_R = 0x200;  // (PAD_BITS')
+constexpr s64 SHOT_AFTER = 400'000'000;  // ns after the fire button is let go: the arrow leaves a little later
+void FaceSpinTest(RCtx* ctx) {
+    static int parsed = -1;
+    static std::vector<u32> fields;
+    static u64 from = 0;
+    if (parsed < 0) {
+        parsed = 0;
+        if (const char* f = std::getenv("MH4N_TEST_FACE_SPIN_FROM")) from = std::strtoull(f, nullptr, 10);
+        if (const char* v = std::getenv("MH4N_TEST_FACE_SPIN")) {
+            std::stringstream in(v);
+            std::string one;
+            while (std::getline(in, one, ',')) {
+                if (!one.empty()) fields.push_back(static_cast<u32>(std::strtoul(one.c_str(), nullptr, 16)));
+            }
+            parsed = fields.empty() ? 0 : 1;
+            LogInfo("lock-on: face spin test on {} field(s)", fields.size());
+        }
+    }
+    if (parsed != 1 || frames < from) return;
+    int weapon = -1;
+    const u32 hunter = LocalHunter(ctx, &weapon);
+    if (!hunter) return;
+    static s64 said = 0;
+    const s64 now = SteadyNs();
+    std::string values;
+    for (const u32 f : fields) {
+        wr16(ctx, hunter + f, static_cast<u16>(rd16(ctx, hunter + f) + 0x400));
+        values += fmt::format(" +{:x} {:04x}", f, rd16(ctx, hunter + f));
+    }
+    if (now - said > 1'000'000'000) {
+        said = now;
+        LogInfo("lock-on: face spin:{} (+d24 {:04x}, +e5c {:04x}, +a350 {:04x})", values, rd16(ctx, hunter + 0xd24),
+                rd16(ctx, hunter + 0xe5c), rd16(ctx, hunter + 0xa350));
+    }
+}
+void LockShotStep(RCtx* ctx, u32 held) {
+    FaceSpinTest(ctx);
+    static bool armed = false, said = false;
+    static u32 was = 0;
+    static s64 fired = 0;
+    const u32 pressed = held & ~was;
+    was = held;
+    int weapon = -1;
+    const u32 hunter = lock_on.load(std::memory_order_relaxed) && lock_monster ? LocalHunter(ctx, &weapon) : 0;
+    if (!hunter || (weapon != WEAPON_BOW && weapon != WEAPON_BOWGUN) || WeaponOut(ctx, hunter) != 1) {
+        armed = false;
+        return;
+    }
+    const bool bow = weapon == WEAPON_BOW;
+    const u32 fire = bow ? SHOT_X : SHOT_A, others = (bow ? SHOT_A : SHOT_X) | SHOT_B | SHOT_Y | SHOT_R;
+    const s64 now = SteadyNs();
+    const bool by_hand = now - lock_hand_at < LOCK_AFTER_TURN;
+    if (pressed & fire) {
+        armed = !(held & others) && !by_hand;
+        said = false;
+    }
+    if (held & fire) fired = now;
+    if ((pressed & others) || by_hand) armed = false;  // (the player's own: an aim, a coating, a dodge, a turn by hand)
+    if (armed && !(held & fire) && now - fired >= SHOT_AFTER) armed = false;  // (the shot is over)
+    if (!armed) return;
+    const u32 state = rd32(ctx, hunter + HUNTER_STATE);
+    u32 info = 0;
+    if (!HeapPointer(state) || !LargeMonster(ctx, lock_monster, &info)) return;
+    const float hx = ReadF32(ctx, state + HUNTER_POINT), hz = ReadF32(ctx, state + HUNTER_POINT + 8);
+    const float mx = ReadF32(ctx, lock_monster + UNIT_POSITION), mz = ReadF32(ctx, lock_monster + UNIT_POSITION + 8);
+    if (!std::isfinite(hx + hz + mx + mz) || (mx - hx) * (mx - hx) + (mz - hz) * (mz - hz) < 1.0f) return;
+    const u16 facing = static_cast<u16>(AngleUnits(mx - hx, mz - hz));
+    const u16 before = static_cast<u16>(rd16(ctx, hunter + HUNTER_FACING));
+    for (const u32 field : {HUNTER_FACING, HUNTER_FACING_COPY, HUNTER_FACING_COPY2}) {  // (the copies as the game makes them)
+        wr16(ctx, hunter + field, facing);
+    }
+    if (!said) {
+        said = true;
+        LogInfo("lock-on: {}'s shot turned to monster {:08X} (facing {:04x} -> {:04x})", bow ? "a bow" : "a bowgun",
+                lock_monster, before, facing);
     }
 }
 
@@ -2893,6 +3212,9 @@ std::vector<std::string> Install(const RCodeInfo& info) {
     if (options.trace_filters) {
         log.push_back("tracing screen filters");
     }
+    if (!options.effects) {
+        log.push_back("the game's particle effects off");
+    }
     if (options.trace_state) {
         log.push_back("tracing the game's state (menus, the weapon, the item bar)");
     }
@@ -2908,7 +3230,7 @@ std::vector<std::string> Install(const RCodeInfo& info) {
             log.push_back(fmt::format("no hook point for {} at {:08X} (rebuild the code library)",
                                       hook.name, addr));
             ++missing_hook_points;
-        } else if (hook.addr == PANEL_PROCESS_TOUCH) {
+        } else if (hook.addr == PANEL_PROCESS_TOUCH.Usa()) {
             panel_touch_allowed_return = addr + (PANEL_TOUCH_ALLOWED_RETURN - PANEL_PROCESS_TOUCH);
         }
     }
@@ -3047,7 +3369,8 @@ bool SetOption(const std::string& key, const std::string& value) {
         "quest_overlay", "target_overlay",
         "hud_edges", "trace_frames", "trace_layout", "trace_panels", "bloom", "motion_blur",
         "depth_of_field", "radial_blur", "haze", "trace_filters", "trace_state", "item_bar", "hud_probe",
-        "qol_hold_gather", "qol_flex_cancel", "qol_sharpen_cancel", "qol_rewards_no_limit"};
+        "qol_hold_gather", "qol_flex_cancel", "qol_sharpen_cancel", "qol_rewards_no_limit", "rewards_send_all",
+        "single_screen", "effects"};
     if (std::find(std::begin(live), std::end(live), key) == std::end(live) && HudPartIndex(key) < 0) {
         return false;
     }

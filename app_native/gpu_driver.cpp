@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "adrenotools/driver.h"
+#include "crash_screen.h"
 #include "app_jni.h"
 #include "gpu/backend/driver_hooks.h"
 
@@ -231,6 +232,7 @@ void gpu_driver_setup() {
     hooks.loader = Loader;
     hooks.failed = Failed;
     hooks.device_made = DeviceMade;
+    hooks.device_lost = [](const std::string& where) { crash_screen_device_lost(where.c_str()); };
     rhi::SetDriverHooks(std::move(hooks));
 }
 

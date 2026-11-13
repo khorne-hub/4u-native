@@ -71,7 +71,8 @@ public class GameActivity extends SDLActivity {
         getExternalFilesDir(null);  // (makes the folder, so the native side and adb can find it)
         if (!entered) AppHome.ensure(this);  // (a test run started with adb: the app's folder checked, as the entry does)
         SaveFolder.applyPending(this);  // (Settings -> Save folder, before the game reads the save: done by the gate already)
-        SaveActivity.applyPending(this);  // (an imported save, before the game reads it)
+        SaveActivity.applyPending(this);  // (an imported save, before the game reads it: done by the gate already)
+        ExtraImportActivity.applyPending(this);  // (imported event quests, before the game reads its extra data)
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         pickRefreshRate();
@@ -188,6 +189,19 @@ public class GameActivity extends SDLActivity {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
     }
 
+    /** El informe de entrada del log (app_native/controls.cpp, por JNI desde el hilo de SDL), como el del port de MHGU:
+     *  los dispositivos de entrada como los lista Android y las teclas de mando de los que no se leen como mando. "" si
+     *  nada cambió. */
+    public static String inputReport(boolean changed) {
+        return org.libsdl.app.SDLControllerManager.inputReport(changed);
+    }
+
+    /** Teclado y mouse conectados (app_native/controls.cpp, por JNI desde el hilo de SDL), como en el port de MHGU: 1 un
+     *  teclado físico con letras, 2 un mouse, los dos sumados. Con los dos, las opciones muestran las teclas y el mouse. */
+    public static int keyboardMouse() {
+        return org.libsdl.app.SDLControllerManager.keyboardMouse();
+    }
+
     /** Ajustes -> Licencias (runtime/ui.c show_licenses, por JNI desde el hilo de SDL). */
     public static void showLicenses() {
         SDLActivity activity = mSingleton;
@@ -198,6 +212,18 @@ public class GameActivity extends SDLActivity {
     public static void showSaveImport() {
         SDLActivity activity = mSingleton;
         if (activity != null) activity.startActivity(new Intent(activity, SaveActivity.class));
+    }
+
+    /** Settings -> Import DLC and event quests (S37). */
+    public static void showExtraImport() {
+        SDLActivity activity = mSingleton;
+        if (activity != null) activity.startActivity(new Intent(activity, ExtraImportActivity.class));
+    }
+
+    /** Settings -> Shortcut with your image (S56). */
+    public static void showShortcut() {
+        SDLActivity activity = mSingleton;
+        if (activity != null) activity.startActivity(new Intent(activity, ShortcutActivity.class));
     }
 
     /** Settings -> Save folder. */
@@ -220,6 +246,12 @@ public class GameActivity extends SDLActivity {
 
     /** Settings -> Cheats -> Import cheats (app_native/content.cpp): ImportActivity, over the game. */
     public static void showCheatImport() { showImport(ImportActivity.CHEATS); }
+
+    /** The layout editor's Picture -> Add pictures (app_native/touch.cpp img_tap): the buttons' own pictures. */
+    public static void importPictures() {
+        SDLActivity activity = mSingleton;
+        if (activity != null) activity.startActivity(new Intent(activity, PicturesActivity.class));
+    }
 
     /** Settings -> Mods -> Add a mod (.zip / folder) (app_native/content.cpp): ImportActivity, over the game. */
     public static void showModImport() { showImport(ImportActivity.MOD_ZIP); }
@@ -267,6 +299,13 @@ public class GameActivity extends SDLActivity {
         }
     }
     private static android.net.wifi.WifiManager.MulticastLock lanLock;
+
+    /** Settings -> Build the game code: the on-phone builder, over the game (which starts again to load what it made). */
+    public static void showBuilder() {
+        SDLActivity activity = mSingleton;
+        if (activity != null)
+            activity.startActivity(new Intent(activity, BuilderActivity.class).putExtra(BuilderActivity.EXTRA_FROM_GAME, true));
+    }
 
     /** Ajustes -> Carpeta del juego. */
     public static void showGameFolder() {

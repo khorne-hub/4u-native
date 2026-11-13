@@ -39,6 +39,11 @@ void HostDeviceMade(const MadeDevice& device) {
     if (hooks.device_made) hooks.device_made(device);
 }
 
+void HostDeviceLost(const std::string& where) {
+    const DriverHooks hooks = Hooks();
+    if (hooks.device_lost) hooks.device_lost(where);
+}
+
 } // namespace core
 
 } // namespace mh4n::gpu::rhi

@@ -26,8 +26,11 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -44,6 +47,7 @@ public class LogShareActivity extends Activity {
     private static final int MAX_LOG = 2 << 20;  // (the end of each log: a debug session's can be large)
 
     private boolean es;
+    private Thread systemLines;  // (after a crash) addSystemLines
 
     private int dp(int v) {
         return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, getResources().getDisplayMetrics());
@@ -83,6 +87,10 @@ public class LogShareActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         es = "es".equals(Locale.getDefault().getLanguage());
         boolean crash = getIntent().getBooleanExtra(EXTRA_CRASH, false);
+        if (crash && saved == null) {  // (once: not again when the screen turns)
+            systemLines = new Thread(this::addSystemLines, "mh4u-system-log");
+            systemLines.start();
+        }
 
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -106,13 +114,48 @@ public class LogShareActivity extends Activity {
         // Heavenfall's does: "code.bin is ... bytes but the exheader's segments take ...", 4u-native #20), or one whose
         // patch doesn't fit the code it is applied to ("cannot load ...: mods: <name>/exefs/code.ips: patch error")
         boolean codeMod = crash && !library && logSays("cannot load") && (logSays("Loader: code mod") || logSays(": mods: "));
-        if (library) {
+        // the library itself (mh4n runtime: CodeLibrary::Load, Runtime::CheckLibraryBuild): made with another version of the
+        // tools ("built against a different recomp.h", D035), a .so and an .id of two builds, or made with another build of
+        // the code mod whose code goes past the game's data (Heavenfall's)
+        boolean recompH = crash && logSays("different recomp.h");
+        boolean twoBuilds = crash && logSays("come from different builds");
+        boolean modBuild = crash && logSays("another build of the code mod");
+        library = library || modBuild;
+        if (recompH || twoBuilds) {
+            box.addView(text(recompH
+                    ? (es ? "La librería de código se hizo con otra versión de la herramienta (o la hizo otra persona). Vuelve a "
+                            + "hacerla con la herramienta de esta versión (el paso 3 de la guía), copia juntos el .so y el .id, y "
+                            + "no uses una librería ajena."
+                          : "The code library was made with another version of the tool (or by someone else). Make it again "
+                            + "with this version's tool (step 3 of the guide), copy the .so and the .id together, and don't use "
+                            + "a library someone else made.")
+                    : (es ? "La librería de código y el .id que tiene al lado son de armados distintos. Copia juntos los dos "
+                            + "archivos de un mismo armado, hechos con la herramienta de esta versión."
+                          : "The code library and the .id beside it come from different builds. Copy both files of the same "
+                            + "build together, made with this version's tool."), 15, GOLD, false), gap);
+        } else if (modBuild) {
+            box.addView(text(es ? "La librería de código se hizo con otro armado del mod de código que agranda el programa (como "
+                                  + "Heavenfall): cambiaste el mod o sus opciones. Vuelve a hacer la librería con los mods que "
+                                  + "están activados, o vuelve a los mods del último inicio que funcionó."
+                                : "The code library was made with another build of the code mod that makes the program bigger "
+                                  + "(as Heavenfall does): the mod or its options changed. Make the library again with the mods "
+                                  + "that are on, or go back to the mods of the last start that worked.", 15, GOLD, false), gap);
+        } else if (library) {
             box.addView(text(es ? "La librería de código no coincide con el código del juego y los mods de código que están "
                                   + "activados (los que traen una carpeta exefs). Vuelve a hacer la librería en la PC con esos "
                                   + "mods (el paso 3 de la guía), o vuelve a los mods del último inicio que funcionó."
                                 : "The code library doesn't match the game's code with the code mods that are on (the ones "
                                   + "with an exefs folder). Make the library again on the PC with those mods (step 3 of the "
                                   + "guide), or go back to the mods of the last start that worked.", 15, GOLD, false), gap);
+        } else if (codeMod && logSays("exheader.bin:")) {
+            // (a mod's exheader.bin the loader refused: another game's or region's, or not the build of its code.bin)
+            box.addView(text(es ? "Un mod de código trae un exheader.bin que no va con el juego o con su propio code.bin (otro "
+                                  + "juego o región, o archivos de dos armados del mod). Vuelve a armar el mod con tu juego, vuelve "
+                                  + "a los mods del último inicio que funcionó, o apaga los mods de código."
+                                : "A code mod brings an exheader.bin that doesn't go with the game or with its own code.bin "
+                                  + "(another game or region, or files of two builds of the mod). Build the mod again from your "
+                                  + "game, go back to the mods of the last start that worked, or turn the code mods off.",
+                    15, GOLD, false), gap);
         } else if (codeMod) {
             box.addView(text(es ? "Un mod de código cambió el programa del juego de una forma que este port no puede cargar: "
                                   + "está hecho para los emuladores. Vuelve a los mods del último inicio que funcionó, o apaga "
@@ -277,7 +320,68 @@ public class LogShareActivity extends Activity {
         return true;
     }
 
+    /**
+     * After a crash: the system log's error lines of this app (an app reads only its own) at the end of the crashed
+     * session's log.txt, once the game's process is gone (crash_screen.cpp ends it a moment after this screen shows).
+     * They say what the game's own report can't: why the allocator or the C++ library stopped it ("Scudo ERROR: ...",
+     * "terminating due to uncaught exception of type std::bad_alloc"), or the GPU driver's own words. (A Galaxy S23 FE's
+     * Xclipse 920 stopped with a SIGABRT inside its driver's allocator, and the log had only the backtrace.)
+     */
+    private void addSystemLines() {
+        ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        String game = getPackageName();
+        for (int i = 0; i < 30; i++) {  // (3 s at most)
+            boolean alive = false;
+            List<ActivityManager.RunningAppProcessInfo> running = am.getRunningAppProcesses();
+            if (running != null)
+                for (ActivityManager.RunningAppProcessInfo p : running) alive |= game.equals(p.processName);
+            if (!alive) break;
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                return;
+            }
+        }
+        ArrayDeque<String> lines = new ArrayDeque<>();
+        Process logcat = null;
+        try {
+            logcat = new ProcessBuilder("logcat", "-d", "-v", "threadtime", "-t", "4000").redirectErrorStream(true).start();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(logcat.getInputStream(), StandardCharsets.UTF_8))) {
+                for (String l; (l = r.readLine()) != null; ) {
+                    // "MM-DD HH:MM:SS.mmm  PID  TID L TAG: message": errors and fatal ones, not the game's own (in its log)
+                    String[] f = l.trim().split("\\s+", 6);
+                    if (f.length < 6 || f[5].startsWith("MH4U") || f[5].startsWith("SDL")) continue;
+                    // (and the allocator's at any level: scudo says why it aborts in an info line)
+                    if (!f[4].equals("E") && !f[4].equals("F") && !f[5].startsWith("scudo")) continue;
+                    lines.addLast(l.length() > 400 ? l.substring(0, 400) : l);
+                    if (lines.size() > 80) lines.removeFirst();
+                }
+            }
+        } catch (IOException e) {
+            lines.addLast("(logcat: " + e + ")");
+        } finally {
+            if (logcat != null) logcat.destroy();
+        }
+        StringBuilder s = new StringBuilder("\n===== the system log's errors of this app (logcat, the last ").append(lines.size()).append(") =====\n");
+        for (String l : lines) s.append(l).append('\n');
+        try (OutputStream out = new FileOutputStream(new File(home(), "log.txt"), true)) {
+            out.write(s.toString().getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            Log.e(TAG, "system log: " + e);
+        }
+    }
+
+    /** addSystemLines done (or 4 s gone): before the log is shared or the game starts again, which writes a new one. */
+    private void waitSystemLines() {
+        if (systemLines == null) return;
+        try {
+            systemLines.join(4000);
+        } catch (InterruptedException ignored) {
+        }
+    }
+
     private void startGame() {
+        waitSystemLines();
         Intent start = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (start != null) {
             start.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
@@ -287,12 +391,15 @@ public class LogShareActivity extends Activity {
     }
 
     private void share() {
+        waitSystemLines();
         File report = LogProvider.report(this);
         try (OutputStream out = new FileOutputStream(report)) {
             out.write(device().getBytes(StandardCharsets.UTF_8));
             File home = home();
             append(out, new File(home, "log.txt"), "this session");
             append(out, new File(home, "log_prev.txt"), "the session before");
+            File imported = new File(home, "save_import.txt");  // (Import save's last try: where from, which game, what happened)
+            if (imported.isFile()) append(out, imported, "the last save import");
         } catch (IOException e) {
             Log.e(TAG, "share log: " + e);
         }

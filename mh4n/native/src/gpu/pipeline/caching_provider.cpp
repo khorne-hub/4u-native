@@ -2,6 +2,7 @@
 #include "gpu/pipeline/caching_provider.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <condition_variable>
@@ -34,6 +35,18 @@
 #include <unistd.h>
 #endif
 #include "mh4n/host_thread_name.h"
+#include "mh4n/pipeline_progress.h"
+
+namespace mh4n::pipeline_progress {
+namespace {
+std::atomic<uint32_t> g_done{0}, g_total{0};
+std::atomic<bool> g_compiling{false};
+}  // namespace
+State Get() {
+    return State{g_done.load(std::memory_order_relaxed), g_total.load(std::memory_order_relaxed),
+                 g_compiling.load(std::memory_order_relaxed)};
+}
+}  // namespace mh4n::pipeline_progress
 
 namespace mh4n::gpu::pipeline {
 namespace {
@@ -697,10 +710,12 @@ void CachingProvider::Worker() {
         if (from_list) {
             ++stats_.precompiled;
             precompile_failures_ += e.state == State::Failed ? 1 : 0;
+            pipeline_progress::g_done.store(static_cast<uint32_t>(stats_.precompiled), std::memory_order_relaxed);
             work_cv_.notify_one();  // the background queue may go on
         }
         if (!precompile_reported_ && urgent_.empty() && background_.empty() && building_ == 0) {
             precompile_reported_ = true;
+            pipeline_progress::g_compiling.store(false, std::memory_order_relaxed);
             MH4N_LOG(Info, kLog, "the list is compiled ({} keys built on workers, {} failed, {:.0f} ms after the start)",
                      stats_.precompiled, precompile_failures_, MsSince(start_));
         }
@@ -825,6 +840,10 @@ void CachingProvider::Load() {
                 ++dropped;  // not a key of this build, or a vertex stage that cannot be made here
                 continue;
             }
+            if (key->IsFallback() && !options_.background) {
+                ++dropped;  // (no ubershader here, --no-ubershader: a PowerVR's compiler crashed building it)
+                continue;
+            }
             items.push_back(Item{*key, Get32(r.data()), Get32(r.data() + 4)});
         }
         // The fallbacks first (they stop a first draw from stalling), then by decreasing use count.
@@ -842,6 +861,9 @@ void CachingProvider::Load() {
         }
         stats_.listed = items.size();
         precompile_reported_ = items.empty();
+        pipeline_progress::g_done.store(0, std::memory_order_relaxed);
+        pipeline_progress::g_total.store(static_cast<uint32_t>(items.size()), std::memory_order_relaxed);
+        pipeline_progress::g_compiling.store(!items.empty(), std::memory_order_relaxed);
         list = status == ReadStatus::Ok
                    ? fmt::format("{} keys ({} fallbacks; {} dropped), {} vertex sources", items.size(),
                                  std::count_if(items.begin(), items.end(), [](const Item& i) { return i.key.IsFallback(); }),

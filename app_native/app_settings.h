@@ -59,7 +59,8 @@ inline constexpr int kRenderScaleDefault = 100;
 void app_set_window_size(int w, int h);
 int render_scale_times(int percent);
 // What the renderer draws a 3D resolution at, the Adreno fix's floor taken in (first_run.h; `adreno_fix`: AdrenoFix is
-// auto). The dither's default follows it: the game's grid over a picture above 1x
+// auto), and no more than the GPU can draw (first_run.h gpu_scale_limit). The dither's default follows it: the game's
+// grid over a picture above 1x
 int render_scale_used(int percent, bool adreno_fix);
 // AdrenoFix as mh4u-app.ini has it: auto (true) unless "off"
 bool app_adreno_fix();

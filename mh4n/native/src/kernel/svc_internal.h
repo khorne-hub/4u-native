@@ -111,6 +111,8 @@ struct SvcTable::Impl {
     void Break(SvcFrame& f);
     void OutputDebugString(SvcFrame& f);
     void ControlProcess(SvcFrame& f);
+    void FlushProcessDataCache(SvcFrame& f);
+    void ControlProcessMemory(SvcFrame& f);
 
     // ---- svc_memory.cpp ----
     void ControlMemory(SvcFrame& f);

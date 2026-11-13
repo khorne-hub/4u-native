@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "../common/utf8.h"
+#include "game_addr.h"
 #include "hooks.h"
 #include "mh4n/clock.h"
 #include "mh4n/cpu.h"
@@ -536,6 +537,17 @@ void StartedStep(Runtime& runtime) {
         return;
     }
     if (const CodeLibrary* library = runtime.GetCodeHost().Library()) {
+        // the port's addresses in the library's game version (game_addr.h), before the hooks use them
+        std::vector<u32> usa, here;
+        for (const auto& [u, h] : library->PortAddresses()) {
+            usa.push_back(u);
+            here.push_back(h);
+        }
+        const std::vector<u32> missing = Port::SetGameAddresses(usa.data(), here.data(), static_cast<u32>(usa.size()));
+        for (const u32 address : missing) {
+            MH4N_LOG(Warning, kLog, "the code library has no address for the port's 0x{:08X} (config/port_addresses.txt): "
+                     "USA v1.3.0's is used", address);
+        }
         InstallHooks(library->Info());
     }
     InstallOptionChanges(runtime);

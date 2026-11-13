@@ -2,6 +2,6 @@
 #pragma once
 
 // A static void method of GameActivity without arguments: "showSaveImport", "showSaveExport", "showGameFolder",
-// "showShareLog", "showLicenses", "showDriverImport", "showCheatImport", "showModImport",
-// "showModFolderImport", "restartApp".
+// "showShareLog", "showLicenses", "showBuilder", "showDriverImport", "showCheatImport", "showModImport",
+// "showModFolderImport", "showExtraImport", "showShortcut", "restartApp".
 void app_call_activity(const char* method);

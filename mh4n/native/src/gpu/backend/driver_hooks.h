@@ -5,6 +5,9 @@
 //     for the system's. An instance that can't be made with it, or that lists no GPU, is made again with the
 //     system's loader, after `failed` has been told why: a broken driver doesn't stop the game.
 //   - device_made: told by each CreateBackend, once its device is made, which GPU and which driver run.
+//   - device_lost: told once, on whichever thread saw it, that the device is lost (VK_ERROR_DEVICE_LOST from a submission,
+//     a fence or a wait) and where: nothing the renderer submits runs any more, and a wait for it would never end. A
+//     host with no hook keeps going (the waits return at once from then on).
 // Process-wide; the hooks are called on the thread that makes the instance or the device.
 #pragma once
 
@@ -37,6 +40,7 @@ struct DriverHooks {
     std::function<PFN_vkGetInstanceProcAddr()> loader;
     std::function<void(const std::string& why)> failed;
     std::function<void(const MadeDevice&)> device_made;
+    std::function<void(const std::string& where)> device_lost;
 };
 
 // Replaces the hooks (empty ones: the system's loader, nobody told).
@@ -47,6 +51,7 @@ namespace core {
 PFN_vkGetInstanceProcAddr HostLoader();
 void HostLoaderFailed(const std::string& why);
 void HostDeviceMade(const MadeDevice& device);
+void HostDeviceLost(const std::string& where);
 }  // namespace core
 
 }  // namespace mh4n::gpu::rhi

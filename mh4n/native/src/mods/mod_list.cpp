@@ -69,6 +69,8 @@ Mod Describe(const std::string& folder, const std::string& name) {
     for (const char* rel : {"exefs/code.ips", "exefs/code.bps", "exefs/code.bin", "code.ips", "code.bps", "code.bin"}) {
         if (Exists(p / stdfs::path(rel))) m.code = true;
     }
+    m.exheader = Exists(p / "exheader.bin");
+    m.code = m.code || m.exheader;
     return m;
 }
 
@@ -218,6 +220,26 @@ code_patch::Outcome ApplyCode(const std::vector<Mod>& mods, std::vector<u8>& cod
     return code_patch::ApplyFolders(folders, code, bss_pages);
 }
 
+std::vector<std::string> CodeFolders(const std::vector<Mod>& mods) {
+    std::vector<std::string> folders;
+    for (const Mod& m : mods) {
+        if (m.on && m.code) folders.push_back(m.path);
+    }
+    return folders;
+}
+
+std::vector<CodeConflict> CodeConflicts(const std::vector<Mod>& mods) {
+    std::vector<const Mod*> on;
+    for (const Mod& m : mods) {
+        if (m.on && m.code) on.push_back(&m);
+    }
+    std::vector<CodeConflict> out;
+    for (const code_patch::CodeConflict& c : code_patch::CodeConflicts(CodeFolders(mods))) {
+        out.push_back({c.kind, on[c.a]->name, on[c.b]->name});
+    }
+    return out;
+}
+
 std::vector<Layer> RomFsLayers(const std::vector<Mod>& mods) {
     std::vector<Layer> out;
     for (const Mod& m : mods) {
@@ -267,6 +289,18 @@ CodeCheck CheckCode(const std::string& game_folder, const std::vector<Mod>& mods
     if (!outcome.ok) {
         check.error = outcome.error + (outcome.detail.empty() ? "" : " (" + outcome.detail + ")");
         return check;
+    }
+    // a code mod's exheader.bin, as the loader takes it (Loader::OpenGameFolder)
+    std::string which;
+    if (const auto bytes = code_patch::ExheaderOverrideOf(CodeFolders(mods), &which)) {
+        ExHeader mod;
+        std::string why;
+        if (!ParseExHeader(bytes->data(), bytes->size(), &mod, &why) ||
+            !CheckExheaderOverride(header, mod, code.size(), &why)) {
+            check.error = "mods: " + which + "exheader.bin: " + why;
+            return check;
+        }
+        header = mod;
     }
     // CodeLibrary::MatchesWithin: the text, or (a library made past the text, into its last page) more of it
     const std::size_t text = header.text.size, pages = static_cast<std::size_t>(header.text.num_pages) * 0x1000;

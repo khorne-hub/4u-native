@@ -201,11 +201,11 @@ final class Notices {
                 es ? "La versión " + v + " ya está disponible (tienes la " + mine + "). "
                      + (over ? "Se instala encima de esta: tu partida y tus ajustes se quedan como están."
                              : "Esta copia no es la oficial, así que la oficial no se instala encima. Primero exporta tu partida "
-                               + "(Opciones, Exportar partida); después desinstala esta copia, instala la oficial e importa tu partida.")
+                               + "(Opciones, Sistema, Tu partida, Exportar partida); después desinstala esta copia, instala la oficial e importa tu partida.")
                    : "Version " + v + " is out (you have " + mine + "). "
                      + (over ? "It installs over this one: your save and your settings stay as they are."
                              : "This copy isn't the official one, so the official one won't install over it. First export your "
-                               + "save (Settings, Export save); then uninstall this copy, install the official one and import your save."),
+                               + "save (Settings, System, Your game, Export save); then uninstall this copy, install the official one and import your save."),
                 new Look.Choice(es ? "Ver" : "View", true, () -> {
                     try {
                         a.startActivity(new Intent(Intent.ACTION_VIEW,

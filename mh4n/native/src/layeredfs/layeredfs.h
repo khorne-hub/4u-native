@@ -32,6 +32,9 @@
 //    zeros.
 //  - Names are converted with mh4n::utf8 (a lone surrogate becomes U+FFFD; Azahar's boost conversion drops it).
 //  - Messages: counts at Info; the names of mods files at Debug (and the warnings Azahar has).
+//  - A mods file or folder whose name differs from the game's only in capitals (Data/ for data/) stands for the game's
+//    (Respell): Azahar matches names exactly, and such a mod works there only on a case-insensitive host folder
+//    (Windows), as files the game finds by their exact names; the PC tools' mod manager spells them so already.
 //
 // Threads: Read may run on any thread, several at once. Build runs on one thread.
 #pragma once

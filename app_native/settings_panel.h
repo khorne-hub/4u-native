@@ -31,10 +31,12 @@ bool settings_panel_thanks_open();
 bool settings_panel_thanks_event(const SDL_Event& e);
 
 // A notice over the game for a few seconds, in the menu's language (a controller that needs a map, controls.cpp).
-void settings_panel_notice(const std::string& english, const std::string& spanish);
+void settings_panel_notice(const std::string& english, const std::string& spanish, double seconds = 8);
 
 // True once after the panel closed (android_main.cpp reads mh4u-app.ini's [Display] options again then).
 bool settings_panel_closed_now();
+// The chat button over the game (chat_app.cpp): the menu, once open, shows the chat's page
+void settings_panel_open_chat();
 
 // Something is unsaved, or a confirmation is up: the panel wants to stay open.
 bool settings_panel_dirty();

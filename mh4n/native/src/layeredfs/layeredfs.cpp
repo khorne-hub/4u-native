@@ -306,6 +306,30 @@ private:
 
     // ---- the layers ----
 
+    // The game's own spelling of a path a mod spells with other capitals (Data/ for data/, as Windows and macOS would
+    // match it and the PC tools' mod manager spells it): the game looks its files up by their exact names, so a mod's
+    // ROMFS/Data/x.arc would otherwise be a new file the game never reads. A path the game (or an earlier mod) has
+    // exactly, or has in no spelling, stays as it is. Names are ASCII in this game: only A-Z fold.
+    static std::string Lower(const std::string& s) {
+        std::string out = s;
+        for (char& c : out) {
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        }
+        return out;
+    }
+    std::string Respell(const std::unordered_map<std::string, std::string>& lower, const std::string& path) {
+        if (file_path_map_.count(path) || directory_path_map_.count(path)) {
+            return path;
+        }
+        const auto found = lower.find(Lower(path));
+        if (found == lower.end()) {
+            return path;
+        }
+        ++respelled_;
+        MH4N_LOG(Debug, kLog, "LayeredFS {} is the game's {}", path, found->second);
+        return found->second;
+    }
+
     static std::u16string ToUtf16(const std::string& name) { return utf8::ToUtf16(name); }
 
     // Files of romfs/ replace or create files.
@@ -323,7 +347,7 @@ private:
         }
         for (const HostEntry& entry : entries) {
             if (entry.is_directory) {
-                const std::string path = parent_path + entry.name + "/";
+                const std::string path = Respell(lower_dirs_, parent_path + entry.name + "/");
                 if (!directory_path_map_.count(path)) {  // Add this directory
                     auto child = std::make_unique<DirNode>();
                     child->name = entry.name;
@@ -331,6 +355,7 @@ private:
                     child->path = path;
                     child->parent = &parent;
                     directory_path_map_.emplace(path, child.get());
+                    lower_dirs_.emplace(Lower(path), path);
                     parent.directories.emplace_back(std::move(child));
                     ++created_directories_;
                     MH4N_LOG(Debug, kLog, "LayeredFS created directory {}", path);
@@ -339,7 +364,7 @@ private:
                 continue;
             }
 
-            const std::string path = parent_path + entry.name;
+            const std::string path = Respell(lower_files_, parent_path + entry.name);
             if (!file_path_map_.count(path)) {  // Newly created file
                 auto file = std::make_unique<FileNode>();
                 file->name = entry.name;
@@ -347,6 +372,7 @@ private:
                 file->path = path;
                 file->parent = &parent;
                 file_path_map_.emplace(path, file.get());
+                lower_files_.emplace(Lower(path), path);
                 parent.files.emplace_back(std::move(file));
                 ++created_files_;
                 MH4N_LOG(Debug, kLog, "LayeredFS created file {}", path);
@@ -403,7 +429,7 @@ private:
             };
             if (ends_with(".stub", 5)) {
                 // Remove the corresponding file if exists
-                const std::string file_path = path.substr(0, path.size() - 5);
+                const std::string file_path = Respell(lower_files_, path.substr(0, path.size() - 5));
                 const auto found = file_path_map_.find(file_path);
                 if (found != file_path_map_.end()) {
                     FileNode& file = *found->second;
@@ -422,7 +448,7 @@ private:
                 }
 
                 // Azahar goes on with any other extension and applies the file as a BPS patch.
-                const std::string file_path = path.substr(0, path.size() - 4);
+                const std::string file_path = Respell(lower_files_, path.substr(0, path.size() - 4));
                 const auto found = file_path_map_.find(file_path);
                 if (found == file_path_map_.end()) {
                     MH4N_LOG(Warning, kLog, "LayeredFS original file for patch {} not found", path);
@@ -671,9 +697,17 @@ private:
             return false;
         }
 
+        for (const auto& [path, node] : directory_path_map_) lower_dirs_.emplace(Lower(path), path);
+        for (const auto& [path, node] : file_path_map_) lower_files_.emplace(Lower(path), path);
         for (const Layer& layer : layers) {  // (one layer: Azahar's mods folder; more: the port's mod list)
             LoadRelocations(layer.romfs_dir);
             LoadExtRelocations(layer.romfs_ext_dir);
+        }
+        if (respelled_ > 0) {
+            MH4N_LOG(Info, kLog,
+                     "LayeredFS: {} name(s) of the mods' files and folders spelled with other capitals than the game's "
+                     "(Data/ for data/): taken as the game's own, which the game finds them by",
+                     respelled_);
         }
 
         RebuildMetadata();
@@ -782,6 +816,9 @@ private:
     DirNode root_;
     std::unordered_map<std::string, FileNode*> file_path_map_;
     std::unordered_map<std::string, DirNode*> directory_path_map_;
+    // their paths in lower case -> as spelled (Respell)
+    std::unordered_map<std::string, std::string> lower_files_, lower_dirs_;
+    std::size_t respelled_ = 0;
 
     std::vector<u8> metadata_;  // the header, the hash tables and the metadata tables
     std::vector<std::pair<u64, FileNode*>> data_files_;  // assigned data offset -> file, ascending

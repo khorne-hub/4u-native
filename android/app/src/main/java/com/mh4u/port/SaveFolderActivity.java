@@ -30,7 +30,7 @@ import java.util.List;
  * save_folder_pending.txt and the app restarts; SaveFolder.applyPending copies the saves before the game runs again.
  * gate() is the start gate GameFolderActivity runs before the game: the folder gone, the permission lost, an empty
  * folder that had a save, two versions left by a sync app, the save open elsewhere. The same screens and texts as MHGU
- * for Android's.
+ * for Android's. An imported save (SaveActivity) is applied there too, with a notice of what came in.
  */
 public class SaveFolderActivity extends Activity {
     static final String EXTRA_GATE = "gate";  // (opened by the start gate: the game isn't running, Cancel goes back to it)
@@ -361,6 +361,11 @@ public class SaveFolderActivity extends Activity {
                     (es ? "No se pudo cambiar: " : "It couldn't be changed: ") + failed + "\n\n"
                     + (es ? "No se cambió nada: tu partida sigue donde estaba." : "Nothing was changed: your save is where it was."),
                     new Look.Choice(es ? "Continuar" : "Continue", true, () -> gate(a, then)));
+            return;
+        }
+        String[] imported = SaveActivity.applyPending(a);  // (Import save: before the game reads the save, once; what came in, or why not)
+        if (imported != null) {
+            Look.notice(a, imported[0], imported[1], new Look.Choice(es ? "Continuar" : "Continue", true, () -> gate(a, then)));
             return;
         }
         check(a, then, false);

@@ -1673,3 +1673,22 @@ TEST_CASE("a full handle table answers OutOfHandles and the new object is droppe
 }
 
 #endif  // __has_include("recomp.h")
+
+TEST_CASE("FlushProcessDataCache and ControlProcessMemory PROTECT: what Heavenfall's bootstrap calls (S48)") {
+    World w;
+    CHECK(w.Run([&] {
+        REQUIRE(w.Svc(0x01, {3, 0x08000000, 0, 0x2000, 3})[0] == kOk);
+        // 0x54: r0 process, r1 address, r2 size: success, nothing to flush
+        CHECK(w.Svc(0x54, {0xFFFF8001, 0x08000000, 0x2000})[0] == kOk);
+        CHECK(w.Svc(0x54, {0xDEAD, 0x08000000, 0x2000})[0] == kInvalidHandle);
+        // 0x70: r0 process, r1 addr0, r2 addr1, r3 size, r4 type (6 PROTECT), r5 permissions (5: R|X)
+        CHECK(w.Svc(0x70, {0xFFFF8001, 0x08000000, 0, 0x1000, 6, 5})[0] == kOk);
+        Out out = w.Svc(0x02, {0, 0, 0x08000000});
+        CHECK(out[2] == 0x1000);
+        CHECK(out[3] == 5);
+        CHECK(w.Svc(0x70, {0xFFFF8001, 0x08000800, 0, 0x1000, 6, 5})[0] == kMisalignedAddress);
+        CHECK(w.Svc(0x70, {0xFFFF8001, 0x08000000, 0, 0x800, 6, 5})[0] == kMisalignedSize);
+        CHECK(w.Svc(0x70, {0xFFFF8001, 0x08000000, 0x08001000, 0x1000, 4, 3})[0] == kInvalidCombination);  // MAP
+        CHECK(w.Svc(0x70, {0xDEAD, 0x08000000, 0, 0x1000, 6, 5})[0] == kInvalidHandle);
+    }) == RunStatus::Idle);
+}

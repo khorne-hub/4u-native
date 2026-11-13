@@ -1,0 +1,45 @@
+Build the game code on the phone (Settings, Build the game code): the tools it downloads
+
+The first time it runs, the builder downloads these tools from their official sources, checks each one against its
+SHA-256 and keeps them in the app's private files. They are not in the APK, and none of them is game data. The builder
+runs them with two small programs of the app (libpyrun.so, libzigcc.so).
+
+CPython 3.14.9 for Android (64-bit ARM)
+  From:    https://www.python.org/ftp/python/3.14.9/python-3.14.9-aarch64-linux-android.tar.gz
+  SHA-256: e2601ffefb36bd34f49e8743d7ba3dad793bb4478fe879d45773311868b85cc5
+  Only its library and its standard library are kept.
+  License: the Python Software Foundation License Version 2, https://docs.python.org/3/license.html
+  Copyright (c) 2001 Python Software Foundation; All Rights Reserved.
+
+Zig 0.13.0 for 64-bit ARM Linux (the ziglang package on PyPI)
+  From:    https://files.pythonhosted.org/packages/b8/d9/d5e808cbfa20d6b566c27f3445fea30b5ec86d7b45dad237fdc7a8754f53/
+           ziglang-0.13.0-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.musllinux_1_1_aarch64.whl
+  SHA-256: 5714a4d46f9246ba6180a0930e23df2bc8bc26e62b5fe0dc798b4afca1903308
+  Only its program and the parts of its lib folder its C compiler uses are kept.
+  License: MIT (below). Zig includes LLVM, Clang and LLD (Apache License 2.0 with LLVM Exceptions,
+  https://llvm.org/LICENSE.txt) and musl (MIT, https://musl.libc.org/).
+
+  The MIT License (Expat)
+
+  Copyright (c) Zig contributors
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in
+  all copies or substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+  THE SOFTWARE.
+
+Building the game code on the phone was Klark231's idea (https://github.com/klark231/mh4u-builder). The builder in this
+app is the port's own implementation of it: none of that project's files are in it.

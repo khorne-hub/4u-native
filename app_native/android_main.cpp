@@ -25,11 +25,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -43,6 +45,7 @@
 #include "app_live.h"
 #include "app_settings.h"
 #include "app_version.h"
+#include "cache_clear.h"
 #include "content.h"
 #include "controls.h"
 #include "crash_screen.h"
@@ -56,6 +59,7 @@
 #include "settings_panel.h"
 #include "shared_screens.h"
 #include "town.h"
+#include "verify_files.h"
 #include "ui.h"
 #include "gpu/queue/queue_gpu.h"
 #include "input_live/live_input.h"
@@ -466,15 +470,30 @@ int main(int argc, char* argv[]) {
     // settings=<folder>: the app's own options (mh4u-app.ini) of this run, a test run's (the player's are in the external
     // files folder)
     app_settings_init(launch.count("settings") ? launch["settings"] : ext);
+    cache_clear_start(user);  // (the menu's Clear shader cache: before the runtime reads any of it)
+    // HD texture packs (1.0's S26; mh4n gpu/native/hd_textures.h): the game folder's textures/, read in place, the
+    // emulators' packs as they come (a folder of tex1_*.png with its pack.json, or Azahar's load/textures/<title id>/).
+    // Never shipped: each player brings their own, and its memory is their call (the log says it)
+    if (const std::string folder = FirstLine(ext + "/game_folder.txt"); !folder.empty() && !std::getenv("MH4N_TEXTURE_PACKS")) {
+        const std::string packs = folder + "/textures";
+        struct stat st {};
+        if (stat(packs.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            setenv("MH4N_TEXTURE_PACKS", packs.c_str(), 1);
+            std::fprintf(stderr, "[Info] App: texture packs from %s\n", packs.c_str());
+        }
+    }
     // the single-screen mod (a code mod that is on in the user folder's load/mods, GameFolderActivity.syncMods or the
     // settings' Mods page): the game's touch menus are on the top screen, so the touch screen's corner starts hidden
+    bool code_mod = false, touch_start_set = false;
     {
-        const auto mods = mh4n::mods::Enabled(mh4n::mods::Folder(user), kContentTitle);
+        const auto mods = mh4n::mods::Enabled(mh4n::mods::Folder(user), content_title_of(game));
+        code_mod = std::any_of(mods.begin(), mods.end(), [](const mh4n::mods::Mod& m) { return m.code; });
         // (MH4U_TOUCH_START=hidden|shown in launch.txt's env=: a test run's start, whatever the library)
         const char* start = std::getenv("MH4U_TOUCH_START");
         if (start != nullptr && (std::strcmp(start, "hidden") == 0 || std::strcmp(start, "shown") == 0)) {
             ui_set_bottom_default(std::strcmp(start, "shown") == 0);
-        } else if (std::any_of(mods.begin(), mods.end(), [](const mh4n::mods::Mod& m) { return m.code; })) {
+            touch_start_set = true;
+        } else if (code_mod) {
             ui_set_bottom_default(false);
         }
     }
@@ -482,6 +501,17 @@ int main(int argc, char* argv[]) {
     mkdir(user.c_str(), 0770);
     game_options_init(user);
     content_init(user);  // (the settings' Mods and Cheats pages)
+    content_set_game(game);  // (their title: USA or EUR, as the game folder's exheader says)
+    {  // System > Your game > Verify game files (verify_files.h): where everything is, and the code library id this app runs with
+        std::string wanted;
+        size_t size = 0;
+        if (void* data = SDL_LoadFile("code_library_id.txt", &size)) {  // (the APK's assets, as GameFolderActivity.wantedId)
+            wanted.assign(static_cast<const char*>(data), size);
+            SDL_free(data);
+            while (!wanted.empty() && std::isspace(static_cast<unsigned char>(wanted.back()))) wanted.pop_back();
+        }
+        verify_files_init(VerifyPaths{ext, game, code, user, save_folder.empty() ? user : save_folder, wanted});
+    }
     {  // the app's own cheats (faster eating and drinking, as MHGU's), off, the first time
         size_t size = 0;
         if (void* data = SDL_LoadFile("cheats/comer_rapido.txt", &size)) {  // (the APK's assets)
@@ -494,6 +524,35 @@ int main(int argc, char* argv[]) {
     // file only gets a key the settings show with the app's default that the app's own file lacks (first_run_fill)
     if (!FileExists(user + "/mh4u.ini")) first_run_write(user + "/mh4u.ini", first_run_probe());
     else first_run_fill(user + "/mh4u.ini");
+    // one screen (S45, mh4u.ini's single_screen: mh4n port/src/onescreen.cpp puts the touch screen's menus on the top
+    // screen): the touch screen's corner starts hidden too (its button brings it back). Off for the game while a code mod
+    // is on: a single-screen mod (jM5557's, Heavenfall) moves the same menus with its own code (the hooks read the
+    // environment after mh4u.ini; the settings' row says why it is off)
+    {
+        std::string one;
+        for (const auto& [k, v] : ReadKeyValues(user + "/mh4u.ini")) {
+            std::string key = k, value = v;
+            while (!key.empty() && key.back() == ' ') key.pop_back();
+            while (!value.empty() && (value.back() == ' ' || value.back() == '\r')) value.pop_back();
+            while (!value.empty() && value.front() == ' ') value.erase(0, 1);
+            if (key == "single_screen") one = value;
+        }
+        const bool on = one == "1" || one == "on" || one == "true" || one == "yes";
+        // (the settings button's place while those menus are open: touch_set_one_screen; a test run's MH4U_SINGLE_SCREEN
+        // in launch.txt's env= sets the mode as the hooks read it)
+        const char* env_one = std::getenv("MH4U_SINGLE_SCREEN");
+        const std::string run_one = env_one != nullptr ? env_one : one;
+        const bool run_on = run_one == "1" || run_one == "on" || run_one == "true" || run_one == "yes";
+        ui_set_one_screen(code_mod || (run_on && content_title() == kContentTitle));
+        if (code_mod) {
+            setenv("MH4U_SINGLE_SCREEN", "off", 1);
+            if (on) Logf("one screen: off for this start (a code mod is on)");
+        } else if (on && !touch_start_set && content_title() == kContentTitle) {
+            // (the USA game only: another region's library made before 1.0 has no addresses for it, and the hooks keep
+            // the mode off then, so its touch screen stays in view)
+            ui_set_bottom_default(false);
+        }
+    }
     Logf("game %s, code %s, user %s", game.c_str(), code_src.c_str(), user.c_str());
     {
         auto ini = ReadKeyValues(user + "/mh4u.ini");
@@ -542,7 +601,9 @@ int main(int argc, char* argv[]) {
     Logf("screen %dx%d", screen_w, screen_h);
     g_top_aspect = TopAspectFromIni(user + "/mh4u.ini", screen_w, screen_h);
     Logf("top screen shape %.4f (0: the picture's)", g_top_aspect);
-    ui_init(window, renderer, ext);
+    // (the touch layout and its profiles beside the settings: a test run's settings= folder keeps them apart from the
+    // player's own, as MHGU_HOME does in the MHGU port; a player's start has no settings= and keeps them in ext)
+    ui_init(window, renderer, launch.count("settings") ? launch["settings"] : ext);
     {
         const char* cpu = std::getenv("MH4U_PRESENT_CPU");
         g_want_shared = shared_screens_init(renderer) && !(cpu != nullptr && *cpu == '1');
@@ -580,6 +641,14 @@ int main(int argc, char* argv[]) {
     std::string problem;
     if (!FileExists(game + "/exheader.bin")) problem = "No game folder at " + game;
     else if (!CopyIfChanged(code_src, code)) problem = "No code library at " + code_src;
+    if (problem.empty()) {  // (and its .id beside it: the runtime checks that the two come from the same build, S48)
+        // (always copied: a few bytes, and an .id of the same size and an older date is another build's)
+        const auto stem = [](const std::string& so) { return so.substr(0, so.size() - 3); };
+        std::ifstream in(stem(code_src) + ".id", std::ios::binary);
+        std::string id((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (in.is_open() && !id.empty()) std::ofstream(stem(code) + ".id", std::ios::binary | std::ios::trunc) << id;
+        else unlink((stem(code) + ".id").c_str());
+    }
 
     // the game, on its own thread
     std::thread game_thread;
@@ -635,6 +704,11 @@ int main(int argc, char* argv[]) {
                              (api >> 12) & 0x3FFu, api & 0xFFFu,
                              scale_times != asked_times ? ": drawn at 3x (it misdraws below 720 lines)" : "");
             }
+            if (const int limit = gpu_scale_limit(); limit > 0 && adreno_fix_scale(asked_times, app_adreno_fix()) > limit) {
+                std::fprintf(stderr, "[Info] App: 3D resolution: drawn at %dx, the most this GPU can (its images go up to %u "
+                                     "pixels, the render targets are 1024 of the 3DS's rows times it)\n",
+                             scale_times, first_run_gpu_max_image());
+            }
         }
         args.push_back("--scale");
         args.push_back(std::to_string(scale_times));
@@ -652,15 +726,26 @@ int main(int argc, char* argv[]) {
         args.push_back(render_thread);
         // PowerVR's shader compiler crashes building the ubershader (libusc.so, a GE8300): no background builds there, a
         // missing pipeline is built when it is first drawn (tested with --no-ubershader on a Mali: the same picture)
-        // (and no list compiled on a worker at start either: its compiler also crashed building the saved list while the
-        // renderer built its own, so every pipeline is built on the renderer thread alone; the driver's cache stays)
+        // (its compiler also crashed building the saved list on a worker while the renderer built its own: so 0.1.6 to
+        // 0.1.9.2 built every pipeline on the renderer thread when first drawn, with no list, and the game stopped at every
+        // new effect in every session, 4u-native #48. Now, as MHGU for Android's: the list again, compiled from the start
+        // on one worker, and every driver compile, the renderer's too, takes one lock (mh4n backend/core/device.cpp
+        // OneCompileAtATime): never two at once. MH4U_POWERVR_LIST=0: no list, as before)
         if (first_run_gpu_name().find("PowerVR") != std::string::npos) {
+            const char* list_env = std::getenv("MH4U_POWERVR_LIST");
+            const bool list = !(list_env != nullptr && *list_env == '0');
             args.push_back("--no-ubershader");
-            args.push_back("--no-pipeline-list");
-            Logf("PowerVR: pipelines built one at a time when first drawn, no ubershader, no list at start");
+            if (list) {
+                args.push_back("--pipeline-workers");
+                args.push_back("1");
+            } else {
+                args.push_back("--no-pipeline-list");
+            }
+            const char* how = list ? "pipelines built one at a time, the saved list on one worker from the start, no ubershader"
+                                   : "pipelines built one at a time when first drawn, no ubershader, no list at start";
+            Logf("PowerVR: %s", how);
             // (in log.txt too: what a shared log has to show, 4u-native #31)
-            std::fprintf(stderr, "[Info] App: PowerVR (%s): pipelines built one at a time when first drawn, no ubershader, "
-                                 "no list at start\n", first_run_gpu_name().c_str());
+            std::fprintf(stderr, "[Info] App: PowerVR (%s): %s\n", first_run_gpu_name().c_str(), how);
         }
         // the renderer's thread joins the performance-hint session as the game's does (it carries the frame as much;
         // PERF_SUBMIT would join only after reporting frame after frame)

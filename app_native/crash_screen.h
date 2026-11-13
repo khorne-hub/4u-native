@@ -10,7 +10,13 @@
 // outlives this one), and the process then ends. If that thread can't (Java itself stuck), the process ends after a few
 // seconds anyway, as before.
 // The game's own end with an error (Runtime::Boot failing) opens the same screen from android_main.cpp.
+// A lost GPU device (the renderer's driver hook, gpu_driver.cpp) opens it too, as MHGU for Android's FATAL on a lost
+// device does: before, the game froze on its last picture with 0 FPS until it was closed by hand (4u-native #47).
 #pragma once
 
 // android_main.cpp, before the game starts, on the thread SDL gave a JNIEnv (it finds GameActivity there).
 void crash_screen_install();
+
+// The GPU's device is lost (mh4n rhi DriverHooks::device_lost, on whichever thread saw it): the line in the log, the
+// error screen, and the process ends. `where`: what said so (a submission, a fence, a wait) and after which submission.
+void crash_screen_device_lost(const char* where);

@@ -75,6 +75,7 @@ UiInput ui_take_input();
 bool ui_bottom_wanted();
 void ui_toggle_bottom();
 void ui_set_bottom_default(bool shown);  // touch_set_bottom_default
+void ui_set_one_screen(bool on);         // touch_set_one_screen
 // What the game is doing (see UiGameState); call it whenever something changes, or every frame.
 void ui_set_game_state(const UiGameState& state);
 // The settings panel (settings_panel.h) over the game: a tap on the settings button (a long press opens the layout

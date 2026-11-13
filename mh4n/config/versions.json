@@ -1,7 +1,8 @@
 {
-  "_comment": "Hashes of decompressed code.bin and exheader per known version. Add entries only from dumps you verified yourself. Never commit the files themselves.",
+  "_comment": "Hashes of decompressed code.bin and exheader per known version, and each one's short key (the tools' and the library's name for it). Add entries only from dumps you verified yourself. Never commit the files themselves. mod_base_only: the port runs it only as the code a code mod brings (tools/game_version.py).",
   "versions": [
     {
+      "key": "usa_v130",
       "name": "USA v1.3.0 (update title 0004000E00126300, CTR-U-BFGE)",
       "target": true,
       "program_id": "0004000000126300",
@@ -15,9 +16,11 @@
         "rodata": ["0x00DED000", "0x000D2D90"],
         "data": ["0x00EC0000", "0x001C1B84"],
         "bss": ["0x01081B84", "0x0009B5A4"]
-      }
+      },
+      "region": "USA"
     },
     {
+      "key": "eur_v110",
       "name": "EUR v1.1.0 (update title 0004000E00126100, CTR-U-BFGP)",
       "program_id": "0004000000126100",
       "update_title_id": "0004000E00126100",
@@ -31,10 +34,12 @@
         "data": ["0x00EC0000", "0x001C1B84"],
         "bss": ["0x01081B84", "0x0009B5A4"]
       },
-      "shifts": "config/shifts/eur_v110.txt"
+      "shifts": "config/shifts/eur_v110.txt",
+      "region": "EUR"
     },
     {
-      "name": "USA v0.1.0 (base game 0004000000126300, CTR-P-BFGE; not playable: install the v1.3.0 update)",
+      "key": "usa_v010",
+      "name": "USA v0.1.0 (base game 0004000000126300, CTR-P-BFGE; the base of Heavenfall's web installer's code: run as such a mod's code, over the v1.3.0 update)",
       "program_id": "0004000000126300",
       "title_version": 16,
       "exheader_sci_sha1": "58a5f5e1f9ff58a4339d0ea74fa9e8838f7720ba",
@@ -45,10 +50,14 @@
         "rodata": ["0x00DED000", "0x000D2D60"],
         "data": ["0x00EC0000", "0x001C1B7C"],
         "bss": ["0x01081B7C", "0x0009B5AC"]
-      }
+      },
+      "shifts": "config/shifts/usa_v010.txt",
+      "mod_base_only": true,
+      "region": "USA"
     },
     {
-      "name": "EUR v1.0.0 (base game 0004000000126100, CTR-P-BFGP; not playable: install the v1.1.0 update)",
+      "key": "eur_v100",
+      "name": "EUR v1.0.0 (base game 0004000000126100, CTR-P-BFGP; not playable: install the v1.1.0 update; no address map yet, so a code mod built on it, such as Heavenfall's web installer's for EUR, can't run)",
       "program_id": "0004000000126100",
       "title_version": 0,
       "exheader_sci_sha1": "ac9ab031eddf01007f4502fa5bda92caba8fa5c7",
@@ -59,7 +68,14 @@
         "rodata": ["0x00DED000", "0x000D2D60"],
         "data": ["0x00EC0000", "0x001C1B7C"],
         "bss": ["0x01081B7C", "0x0009B5AC"]
-      }
+      },
+      "region": "EUR"
+    },
+    {
+      "key": "jpn_mh4g",
+      "name": "MH4G JPN (Monster Hunter 4G, program 000400000011D700; no addresses yet: its code differs from MH4U's, and config/shifts needs a map made from its dump and the USA v1.3.0 one)",
+      "program_id": "000400000011D700",
+      "region": "JPN"
     }
   ]
 }

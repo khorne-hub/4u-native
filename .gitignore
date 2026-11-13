@@ -27,6 +27,7 @@ android/app/build/
 android/local.properties
 android/app/src/main/jniLibs/
 android/app/src/main/assets/code_library_id.txt
+android/app/src/main/assets/builder/
 __pycache__/
 *.pyc
 *.apk

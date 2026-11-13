@@ -399,9 +399,39 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     }
 
     // Captured pointer events for API 26.
+    // MH4U: a captured mouse (relative mode: the game's camera) sends its movement as ACTION_MOVE and its buttons as
+    // ACTION_BUTTON_PRESS / RELEASE, with the source SOURCE_MOUSE_RELATIVE; onGenericMotion takes only a free pointer's
+    // HOVER_MOVE, so the camera never turned and the buttons pressed nothing (seen with a Bluetooth keyboard and mouse made
+    // with the shell's hid tool on an RG406V: Android said the game had the capture, and no movement came). The movement
+    // and the buttons go to SDL as relative mouse events, as SDL 2's SDLSurface did
     @Override
     public boolean onCapturedPointerEvent(MotionEvent event)
     {
+        int action = event.getActionMasked();
+        if (event.getPointerCount() > 0) {
+            float x = event.getX(0), y = event.getY(0);
+            switch (action) {
+                case MotionEvent.ACTION_SCROLL:
+                    SDLActivity.onNativeMouse(0, action, event.getAxisValue(MotionEvent.AXIS_HSCROLL, 0),
+                                              event.getAxisValue(MotionEvent.AXIS_VSCROLL, 0), false);
+                    return true;
+                case MotionEvent.ACTION_HOVER_MOVE:
+                case MotionEvent.ACTION_MOVE:
+                    SDLActivity.onNativeMouse(0, MotionEvent.ACTION_MOVE, x, y, true);
+                    return true;
+                case MotionEvent.ACTION_BUTTON_PRESS:
+                case MotionEvent.ACTION_BUTTON_RELEASE:
+                    SDLActivity.onNativeMouse(event.getButtonState(),
+                                              action == MotionEvent.ACTION_BUTTON_PRESS ? MotionEvent.ACTION_DOWN : MotionEvent.ACTION_UP,
+                                              0, 0, true);
+                    return true;
+                case MotionEvent.ACTION_DOWN:
+                case MotionEvent.ACTION_UP:
+                    return true;  // (the buttons come with BUTTON_PRESS / RELEASE)
+                default:
+                    break;
+            }
+        }
         return SDLActivity.getMotionListener().onGenericMotion(this, event);
     }
 

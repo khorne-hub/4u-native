@@ -84,7 +84,8 @@ std::string CheckKey(const std::vector<mh4n::mods::Mod>& list, const mh4n::mods:
         if (!m.on || !m.code) continue;
         key += "|" + m.path;
         // (the same mod imported again with other files: another answer)
-        for (const char* rel : {"exefs/code.ips", "exefs/code.bps", "exefs/code.bin", "code.ips", "code.bps", "code.bin"}) {
+        for (const char* rel : {"exefs/code.ips", "exefs/code.bps", "exefs/code.bin", "code.ips", "code.bps", "code.bin",
+                                "exheader.bin"}) {
             std::error_code ec;
             const fs::path p = fs::path(m.path) / rel;
             const auto size = fs::file_size(p, ec);
@@ -98,6 +99,27 @@ std::string CheckKey(const std::vector<mh4n::mods::Mod>& list, const mh4n::mods:
 
 }  // namespace
 
+namespace {
+unsigned long long g_title = kContentTitle;
+}
+
+unsigned long long content_title_of(const std::string& game_folder) {
+    std::ifstream in(game_folder + "/exheader.bin", std::ios::binary);
+    unsigned char e[0x208] = {};
+    if (!in.read(reinterpret_cast<char*>(e), sizeof e)) return kContentTitle;
+    unsigned long long id = 0;
+    for (int i = 7; i >= 0; i--) id = id << 8 | e[0x200 + i];
+    id &= ~0x0000000E00000000ull;  // (an update's id: the base game's)
+    return (id >> 32) == 0x00040000ull ? id : kContentTitle;
+}
+
+void content_set_game(const std::string& game_folder) {
+    g_title = content_title_of(game_folder);
+    if (g_title != kContentTitle) Log("the game's title: %016llX (its mods and cheats are named so)", g_title);
+}
+
+unsigned long long content_title() { return g_title; }
+
 void content_init(const std::string& user_dir) {
     g_user = user_dir;
     while (!g_user.empty() && g_user.back() == '/') g_user.pop_back();
@@ -109,7 +131,7 @@ void content_add_port_cheats(const std::string& text) {
     // (once per user folder: a marker beside the cheats file, so a test run's folder or another one gets its own)
     const std::string marker = CheatsDir() + "/app_cheats_added.txt";
     if (g_user.empty() || text.empty() || access(marker.c_str(), F_OK) == 0) return;
-    const std::string path = mh4n::cheats::CheatFilePath(g_user, kContentTitle);
+    const std::string path = mh4n::cheats::CheatFilePath(g_user, content_title());
     std::string file;
     {
         std::ifstream in(path, std::ios::binary);
@@ -185,6 +207,61 @@ bool content_cheat_remove(size_t index) {
     return engine->Save();
 }
 
+bool content_cheat_to_code_mod(size_t index, std::string* name, std::string* error) {
+    const auto engine = mh4n::cheats::Current();
+    if (!engine || g_user.empty()) {
+        if (error) *error = "not_started";
+        return false;
+    }
+    std::vector<uint8_t> ips;
+    std::string why;
+    if (!engine->CodePatch(index, &ips, &why)) {
+        if (error) *error = why;
+        return false;
+    }
+    const auto list = engine->List();
+    std::string cheat = index < list.size() ? list[index].name : "";
+    std::string safe;  // (a folder's name: letters, digits and a few signs; as ImportActivity.safeName)
+    for (char c : cheat) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+                        strchr(" ._()[]+-", c) != nullptr;
+        safe += ok ? c : '_';
+    }
+    while (!safe.empty() && (safe.back() == ' ' || safe.back() == '.')) safe.pop_back();
+    if (safe.size() > 48) safe.resize(48);
+    *name = "Cheat - " + (safe.empty() ? std::to_string(index + 1) : safe);
+    const std::string dir = ModsDir() + *name + "/exefs";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    {
+        std::ofstream out(dir + "/code.ips", std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(ips.data()), static_cast<std::streamsize>(ips.size()));
+        out.close();
+        if (ec || !out) {
+            if (error) *error = "unwritable";
+            Log("cheat %s: its code mod could not be written in %s", cheat.c_str(), dir.c_str());
+            return false;
+        }
+    }
+    // (off, as a code mod the app adds: the game wouldn't start until the library is made with it; one there already
+    // keeps its place and state)
+    auto mods = content_mods();
+    bool known = false;
+    for (const std::string& l : Lines(ModsDir() + mh4n::mods::kOrderFile)) known |= l == *name || l == "# off: " + *name;
+    if (!known) {
+        for (auto& m : mods)
+            if (m.name == *name) m.on = false;
+        std::string save_error;
+        if (!mh4n::mods::SaveOrder(ModsDir(), mods, &save_error)) {
+            if (error) *error = "unwritable";
+            return false;
+        }
+    }
+    Log("cheat %s made the code mod %s (%zu bytes of IPS), off until the code library is made with it", cheat.c_str(),
+        name->c_str(), ips.size());
+    return true;
+}
+
 void content_cheats_import() {
     if (g_user.empty()) return;
     unlink((CheatsDir() + "/import_result.txt").c_str());
@@ -219,12 +296,21 @@ ContentImport content_cheats_import_result() {
 // ---- mods -----------------------------------------------------------------------------------------------------
 std::vector<mh4n::mods::Mod> content_mods() {
     if (g_user.empty()) return {};
-    return mh4n::mods::List(ModsDir(), kContentTitle);
+    return mh4n::mods::List(ModsDir(), content_title());
+}
+
+std::vector<std::string> content_mods_found_off() {
+    std::vector<std::string> out;
+    if (g_user.empty()) return out;
+    for (const std::string& l : Lines(ModsDir() + ".found_off"))
+        if (!l.empty() && l[0] != '#') out.push_back(l);
+    return out;
 }
 
 bool content_mods_save(const std::vector<mh4n::mods::Mod>& list, std::string* error) {
     if (g_user.empty()) return false;
     if (!mh4n::mods::SaveOrder(ModsDir(), list, error)) return false;
+    unlink((ModsDir() + ".found_off").c_str());  // (the player chose: the note of the mods found off is done)
     std::string names;
     for (const auto& m : list) names += (names.empty() ? "" : ", ") + m.name + (m.on ? "" : " (off)");
     Log("mods saved: %s", names.c_str());
@@ -312,6 +398,31 @@ std::shared_ptr<ContentModScan> content_mods_scan(const std::vector<mh4n::mods::
         scan->done.store(true);
     }).detach();
     return scan;
+}
+
+std::vector<mh4n::mods::CodeConflict> content_code_conflicts(const std::vector<mh4n::mods::Mod>& list) {
+    static std::mutex mutex;
+    static std::string last_key = "-";
+    static std::vector<mh4n::mods::CodeConflict> last;
+    std::string key;
+    for (const auto& m : list) {
+        if (!m.on || !m.code) continue;
+        key += "|" + m.path;
+        for (const char* rel : {"exefs/code.ips", "exefs/code.bps", "exefs/code.bin", "code.ips", "code.bps", "code.bin",
+                                "exheader.bin"}) {
+            std::error_code ec;
+            const fs::path p = fs::path(m.path) / rel;
+            const auto size = fs::file_size(p, ec);
+            if (!ec) key += ":" + std::string(rel) + "=" + std::to_string(static_cast<unsigned long long>(size));
+        }
+    }
+    std::lock_guard lock(mutex);
+    if (key != last_key) {
+        last = mh4n::mods::CodeConflicts(list);
+        last_key = key;
+        for (const auto& c : last) Log("code mods that don't go together: %s and %s (%d)", c.a.c_str(), c.b.c_str(), (int)c.kind);
+    }
+    return last;
 }
 
 ContentCodeCheck content_code_check(const std::vector<mh4n::mods::Mod>& list) {

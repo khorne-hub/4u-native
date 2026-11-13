@@ -11,6 +11,7 @@
 #include "cheats/gateway_cheat.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -202,6 +203,42 @@ std::vector<std::string> SplitString(const std::string& str, char delim) {
     }
     output.pop_back();
     return output;
+}
+
+// A code line as the community's lists write it, in the form Azahar reads ("XXXXXXXX YYYYYYYY"): the two words
+// split by any spaces or tabs, or written together (16 digits), and a comment after them ("// ...", "# ...",
+// "; ..."). Anything else: nullopt (the line stays as it is, and is no code).
+std::optional<std::string> NormalizeCodeLine(const std::string& line) {
+    const auto hex_run = [&](std::size_t at) {
+        std::size_t e = at;
+        while (e < line.size() && std::isxdigit(static_cast<unsigned char>(line[e]))) ++e;
+        return e - at;
+    };
+    const auto blank = [](char c) { return c == ' ' || c == '\t'; };
+    std::string first, second;
+    std::size_t at = 0;
+    const std::size_t n1 = hex_run(0);
+    if (n1 == 16) {
+        first = line.substr(0, 8), second = line.substr(8, 8);
+        at = 16;
+    } else if (n1 == 8) {
+        first = line.substr(0, 8);
+        at = 8;
+        if (at >= line.size() || !blank(line[at])) return std::nullopt;
+        while (at < line.size() && blank(line[at])) ++at;
+        if (hex_run(at) != 8) return std::nullopt;
+        second = line.substr(at, 8);
+        at += 8;
+    } else {
+        return std::nullopt;
+    }
+    if (at < line.size()) {  // only a comment may follow, after a space
+        if (!blank(line[at])) return std::nullopt;
+        while (at < line.size() && blank(line[at])) ++at;
+        const std::string rest = line.substr(at);
+        if (!(rest.rfind("//", 0) == 0 || rest.front() == '#' || rest.front() == ';')) return std::nullopt;
+    }
+    return first + ' ' + second;
 }
 
 }  // namespace
@@ -474,6 +511,82 @@ bool GatewayCheat::TouchesCode(u32 begin, u32 end) const {
     return false;
 }
 
+bool GatewayCheat::CodeWrites(u32 begin, u32 end, std::map<u32, u8>* bytes, std::string* why) const {
+    u32 offset = 0;
+    bool offset_known = true;  // (false after B: an offset read from memory, until D3 or D2 sets one again)
+    int conditions = 0;        // (open conditions and buttons: D0 closes one, D2 all)
+    bool loop = false;         // (C0 up to D1 or D2)
+    std::string blocked;
+    const auto put = [&](u32 address, u32 value, u32 size) {
+        for (u32 i = 0; i < size; ++i) {
+            const u64 at = static_cast<u64>(address) + i;
+            if (at < begin || at >= end) continue;
+            if (!offset_known) {
+                blocked = "loaded_offset";
+                return false;
+            }
+            if (conditions > 0 || loop) {
+                blocked = "conditional";
+                return false;
+            }
+            (*bytes)[static_cast<u32>(at)] = static_cast<u8>(value >> (8 * i));
+        }
+        return true;
+    };
+    bool ok = true;
+    for (std::size_t i = 0; i < cheat_lines_.size() && ok; ++i) {
+        const CheatLine& line = cheat_lines_[i];
+        switch (line.type) {
+        case CheatType::Write32: ok = put(line.address + offset, line.value, 4); break;
+        case CheatType::Write16: ok = put(line.address + offset, line.value, 2); break;
+        case CheatType::Write8: ok = put(line.address + offset, line.value, 1); break;
+        case CheatType::Patch: {  // (its bytes: the next lines' words in turn, as PatchOp reads them)
+            const u32 address = line.address + offset;
+            std::size_t nr = i + 1;
+            bool first = true;
+            for (u32 n = 0; n < line.value && ok && nr < cheat_lines_.size(); n += 4) {
+                const u32 word = first ? cheat_lines_[nr].first : cheat_lines_[nr].value;
+                ok = put(address + n, word, std::min<u32>(4, line.value - n));
+                if (!first) ++nr;
+                first = !first;
+            }
+            i += static_cast<std::size_t>(std::ceil(line.value / 8.0));
+            break;
+        }
+        case CheatType::SetOffset: offset = line.value, offset_known = true; break;
+        case CheatType::AddOffset: offset += line.value; break;
+        case CheatType::LoadOffset: offset_known = false; break;
+        case CheatType::FullTerminator: offset = 0, offset_known = true, conditions = 0, loop = false; break;
+        case CheatType::Terminator: conditions = conditions > 0 ? conditions - 1 : 0; break;
+        case CheatType::LoopExecuteVariant: loop = false; break;
+        case CheatType::Loop: loop = true; break;
+        case CheatType::GreaterThan32: case CheatType::LessThan32: case CheatType::EqualTo32: case CheatType::NotEqualTo32:
+        case CheatType::GreaterThan16WithMask: case CheatType::LessThan16WithMask: case CheatType::EqualTo16WithMask:
+        case CheatType::NotEqualTo16WithMask: case CheatType::Joker:
+            ++conditions;
+            break;
+        case CheatType::IncrementiveWrite32: case CheatType::IncrementiveWrite16: case CheatType::IncrementiveWrite8: {
+            const u32 size = line.type == CheatType::IncrementiveWrite32 ? 4 : line.type == CheatType::IncrementiveWrite16 ? 2 : 1;
+            const u64 at = static_cast<u64>(line.value) + offset;
+            if (at < end && at + size > begin) {  // (the register's value: read from memory or added up at run time)
+                blocked = "register";
+                ok = false;
+            }
+            offset += size;
+            break;
+        }
+        default:
+            break;
+        }
+    }
+    if (!ok || bytes->empty()) {
+        if (why) *why = !ok ? blocked : "none";
+        bytes->clear();
+        return false;
+    }
+    return true;
+}
+
 std::string GatewayCheat::ToString() const {
     std::string result;
     result += '[' + name_ + "]\n";
@@ -497,8 +610,11 @@ std::vector<std::shared_ptr<GatewayCheat>> GatewayCheat::Parse(const std::string
     bool enabled = false;
 
     std::string line;
+    bool first_line = true;
     while (std::getline(file, line)) {
         line.erase(std::remove(line.begin(), line.end(), '\0'), line.end());
+        if (first_line && line.rfind("\xEF\xBB\xBF", 0) == 0) line.erase(0, 3);  // (a UTF-8 file's mark: Notepad's)
+        first_line = false;
         line = StripSpaces(line);  // remove spaces at front and end
         if (line.length() >= 2 && line.front() == '[') {
             if (!cheat_lines.empty()) {
@@ -506,7 +622,9 @@ std::vector<std::shared_ptr<GatewayCheat>> GatewayCheat::Parse(const std::string
                 cheats.back()->SetEnabled(enabled);
                 enabled = false;
             }
-            name = line.substr(1, line.length() - 2);
+            // (up to its last ']': "[Name] // by someone" is Name)
+            const std::size_t close = line.rfind(']');
+            name = close != std::string::npos && close > 0 ? line.substr(1, close - 1) : line.substr(1, line.length() - 2);
             cheat_lines.clear();
             comments.erase();
         } else if (!line.empty() && line.front() == '*') {
@@ -515,8 +633,14 @@ std::vector<std::shared_ptr<GatewayCheat>> GatewayCheat::Parse(const std::string
             } else {
                 comments += line.substr(1, line.length() - 1) + '\n';
             }
+        } else if (!line.empty() && (line.front() == '{' || line.front() == '#' || line.rfind("//", 0) == 0)) {
+            // a note: CTRPF's "{...}", or a comment the lists add; kept as a comment (Azahar's are '*' lines)
+            std::string note = line.front() == '{' ? line.substr(1, line.length() - (line.back() == '}' ? 2 : 1))
+                                                   : line.substr(line.front() == '#' ? 1 : 2);
+            comments += StripSpaces(note) + '\n';
         } else if (!line.empty()) {
-            cheat_lines.emplace_back(line);
+            const std::optional<std::string> code = NormalizeCodeLine(line);
+            cheat_lines.emplace_back(code ? *code : line);
         }
     }
     if (!cheat_lines.empty()) {

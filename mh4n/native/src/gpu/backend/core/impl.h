@@ -104,6 +104,9 @@ struct Backend::Impl : std::enable_shared_from_this<Backend::Impl> {
     std::deque<PendingFence> pending_fences;
     std::vector<std::unique_ptr<::plume::RenderCommandFence>> free_fences;
     std::atomic<TimelineValue> fence_completed{0};
+    // VK_ERROR_DEVICE_LOST was seen (DeviceLost, submit.cpp): the waits return at once from then on
+    std::atomic<bool> device_lost{false};
+    void DeviceLost(const char* where, VkResult result);
 
     // Command lists: reused once the value they were submitted with has passed.
     std::mutex list_mutex;

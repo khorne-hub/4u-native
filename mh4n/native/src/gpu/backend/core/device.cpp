@@ -2,6 +2,7 @@
 // capabilities use, applying the mask, and the Backend's read-only accessors (N2-26).
 #include <algorithm>
 #include <cstdlib>
+#include <mutex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -384,6 +385,57 @@ void ReleaseWithLastHandle(Backend* backend) {
     delete backend;
 }
 
+// ---- a PowerVR: one driver compile at a time ----
+// Its shader compiler crashed building two things at once (libusc.so on a GE8300 building the ubershader; the saved list
+// built on a worker while the renderer built its own misses), so since 0.1.6 a PowerVR built every pipeline on the
+// renderer thread when first drawn, with no list: the game stopped at every new effect, in every session (4u-native
+// #48, Helio G35 / GE8320). As MHGU for Android does on a PowerVR (runtime/nvn/vulkan/device.c one_compiler_install):
+// every call into the driver's compiler takes one lock, from any thread (the list's worker, the renderer's own misses,
+// the pipeline check), and the cache's data is not read while one runs. Never two at once. MH4N_ONE_COMPILE=1 does it on
+// any GPU, =0 never (a test aid).
+std::mutex g_compiler_lock;
+PFN_vkCreateShaderModule g_driver_create_module = nullptr;
+PFN_vkCreateGraphicsPipelines g_driver_create_graphics = nullptr;
+PFN_vkCreateComputePipelines g_driver_create_compute = nullptr;
+PFN_vkGetPipelineCacheData g_driver_cache_data = nullptr;
+
+VKAPI_ATTR VkResult VKAPI_CALL OneCreateModule(VkDevice d, const VkShaderModuleCreateInfo* ci, const VkAllocationCallbacks* a,
+                                               VkShaderModule* m) {
+    std::lock_guard lock(g_compiler_lock);
+    return g_driver_create_module(d, ci, a, m);
+}
+VKAPI_ATTR VkResult VKAPI_CALL OneCreateGraphics(VkDevice d, VkPipelineCache c, uint32_t n, const VkGraphicsPipelineCreateInfo* ci,
+                                                 const VkAllocationCallbacks* a, VkPipeline* p) {
+    std::lock_guard lock(g_compiler_lock);
+    return g_driver_create_graphics(d, c, n, ci, a, p);
+}
+VKAPI_ATTR VkResult VKAPI_CALL OneCreateCompute(VkDevice d, VkPipelineCache c, uint32_t n, const VkComputePipelineCreateInfo* ci,
+                                                const VkAllocationCallbacks* a, VkPipeline* p) {
+    std::lock_guard lock(g_compiler_lock);
+    return g_driver_create_compute(d, c, n, ci, a, p);
+}
+VKAPI_ATTR VkResult VKAPI_CALL OneCacheData(VkDevice d, VkPipelineCache c, size_t* size, void* data) {
+    std::lock_guard lock(g_compiler_lock);
+    return g_driver_cache_data(d, c, size, data);
+}
+
+// (on the thread that made the device, before anything of it is compiled; volk's pointers are process-wide, and an
+// instance made again loads them again: put back each time)
+void OneCompileAtATime(const Capabilities& c) {
+    constexpr u32 kVendorImagination = 0x1010, kDriverImagination = 7;  // (VkDriverId)
+    const char* env = std::getenv("MH4N_ONE_COMPILE");
+    const bool on = env != nullptr && (*env == '0' || *env == '1')
+                        ? *env == '1'
+                        : c.vendor_id == kVendorImagination || c.driver_id == kDriverImagination;
+    if (!on || vkCreateGraphicsPipelines == OneCreateGraphics) return;
+    g_driver_create_module = vkCreateShaderModule, vkCreateShaderModule = OneCreateModule;
+    g_driver_create_graphics = vkCreateGraphicsPipelines, vkCreateGraphicsPipelines = OneCreateGraphics;
+    g_driver_create_compute = vkCreateComputePipelines, vkCreateComputePipelines = OneCreateCompute;
+    g_driver_cache_data = vkGetPipelineCacheData, vkGetPipelineCacheData = OneCacheData;
+    MH4N_LOG(Info, "RHI", "rhi: one shader or pipeline build at a time, from any thread (a PowerVR: its compiler crashed "
+                          "building two at once){}", env != nullptr ? " (MH4N_ONE_COMPILE)" : "");
+}
+
 } // namespace
 
 Result<std::shared_ptr<Backend>> CreateBackend(std::shared_ptr<Instance> instance, const BackendOptions& options) {
@@ -647,6 +699,7 @@ Result<std::shared_ptr<Backend>> CreateBackend(std::shared_ptr<Instance> instanc
         MH4N_LOG(Info, "RHI", "rhi: driver info \"{}\", version {:#x}{}", made.driver_info, made.driver_version, release);
         core::HostDeviceMade(made);
     }
+    OneCompileAtATime(c);
 
     return std::shared_ptr<Backend>(new Backend(std::move(impl)), ReleaseWithLastHandle);
 }

@@ -60,9 +60,11 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import code_mods  # noqa: E402
+import build_function_table  # noqa: E402
 import codebin2elf  # noqa: E402
 import exheader as exh  # noqa: E402
 import extract_ncch  # noqa: E402
+import game_version  # noqa: E402
 import mods  # noqa: E402
 import pica_native  # noqa: E402
 import recompile  # noqa: E402
@@ -327,6 +329,52 @@ def translate_tables(version: dict, entries: dict, hooks: dict, tunables: dict) 
     return entries, hooks, tunables
 
 
+def mod_folders(args, program_id: int) -> list[str]:
+    """The folders of the code mods the library is made with, in load order: --game-mods' (the game folder's mods/,
+    as the app copies them); for the native app, every mod that is on in <user>/load/mods (mods::List: the app reads
+    them all, ordered by load_order.txt); for Azahar, its one folder load/mods/<program id>/."""
+    if args.no_mods:
+        return []
+    if args.game_mods:
+        own = code_mods.describe_mod(os.path.dirname(os.path.abspath(args.game_mods)), os.path.basename(
+            os.path.abspath(args.game_mods)))
+        if own.code:   # (a mod's own folder, with exefs/ or exheader.bin in it)
+            return [own.path]
+        found = code_mods.game_folder_mods(args.game_mods, program_id)
+        return [path for _, path in sorted(found.items())
+                if code_mods.describe_mod(os.path.dirname(path), os.path.basename(path)).code]
+    user = args.mods or args.install
+    if not user:
+        return []
+    if args.native:
+        return code_mods.code_folders(code_mods.list_mods(os.path.join(user, "load", "mods"), program_id))
+    folder = code_mods.mod_dir(user, program_id)
+    return [folder] if code_mods.describe_mod(os.path.dirname(folder), os.path.basename(folder)).code else []
+
+
+def compile_library(args, out: str, program_id: int, modes: list[str]) -> tuple[str, str]:
+    """The library from the recompiled C in out/src (an object is compiled again only when its C is newer:
+    recomp/build.py), with its id beside it for the native app; returns (its path, its name)."""
+    toolchain_dir = os.path.join(args.out, "toolchain")
+    if args.fetch_compiler and not args.cc and sys.platform.startswith("win"):
+        cc = fetch_compiler(toolchain_dir, args.compiler_zip)
+    elif args.android:
+        cc = find_android_compiler(args.cc, toolchain_dir, args.fetch_compiler)
+    else:
+        cc = find_compiler(args.cc, toolchain_dir, args.fetch_compiler)
+    name = (android_library_name if args.android else library_name)(program_id, args.native, args.deterministic)
+    print(f"compiling with {cc} -{args.opt}{' for Android' if args.android else ''} ({args.jobs} jobs; "
+          "-O1 takes a while)")
+    lib = rbuild.build(out, args.jobs, args.opt, modes or ["RC_PAGED"], os.path.join("android", name) if args.android
+                       else name, [rbuild.DLL_GLUE], cc=cc, extra_flags=["-fvisibility=hidden"], android=args.android)
+    print(f"code library: {lib}")
+    if args.android and args.native:  # (the native app checks it: GameFolderActivity)
+        with open(id_path(lib), "w", encoding="ascii") as f:
+            f.write(code_library_id(True, args.deterministic) + "\n")
+        print(f"its id, for the app: {id_path(lib)}")
+    return lib, name
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--dump", help="decrypted .cia / .3ds / .cci / .cxi of your own copy")
@@ -358,6 +406,14 @@ def main(argv=None) -> int:
                     help="apply the code mods in AZAHAR_USER_DIR/load/mods/<program id>/ (default: the "
                          "--install directory, if any)")
     ap.add_argument("--no-mods", action="store_true", help="build from the unmodified code")
+    ap.add_argument("--game-mods", metavar="FOLDER",
+                    help="the mods folder beside the game, as you put it on the phone (mods/0004000000126300/, or "
+                         "mods/<name>/ with the title's folder or romfs, exefs in it): the code mods the app will copy "
+                         "from it, instead of a user folder's")
+    ap.add_argument("--game-version", metavar="KEY",
+                    help="the game's version, by its key in config/versions.json (python3 tools/game_version.py list), "
+                         "whatever the dump's hash says")
+    ap.add_argument("--port-addresses", default=game_version.PORT_ADDRESSES, help=argparse.SUPPRESS)
     ap.add_argument("--romfs", action="append", default=[], metavar="DUMP_OR_ROMFS",
                     help="the base game's dump (.3ds/.cci) or a game folder's romfs.bin: its geometry shaders are compiled "
                          "into the library (repeatable)")
@@ -366,6 +422,10 @@ def main(argv=None) -> int:
     ap.add_argument("--hooks", default=os.path.join(ROOT, "config", "hooks.txt"), help=argparse.SUPPRESS)
     ap.add_argument("--tunables", default=os.path.join(ROOT, "config", "tunables.txt"), help=argparse.SUPPRESS)
     ap.add_argument("--versions", default=os.path.join(ROOT, "config", "versions.json"), help=argparse.SUPPRESS)
+    # (the on-phone builder going on with a run cut short, tools/android/phone_build.py: --out already holds the
+    # translation an earlier run made from the same dump, code mods and tools, which phone_build.py checks; only the
+    # compile and the link are done, from the objects that are still missing)
+    ap.add_argument("--compile-only", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if args.print_id:
         print(code_library_id(True, args.deterministic))
@@ -382,6 +442,14 @@ def main(argv=None) -> int:
                          "this PC's Azahar can't use an Android library")
 
     dump_dir = os.path.join(args.out, "dump")
+    if args.compile_only:
+        if args.install:
+            raise SystemExit("--compile-only doesn't install: the translation's record of the mods isn't kept")
+        with open(os.path.join(dump_dir, "exheader.bin"), "rb") as f:
+            program_id = struct.unpack_from("<Q", f.read(), 0x200)[0]
+        print("translation: the one an earlier run made from the same files and tools, kept")
+        compile_library(args, os.path.join(args.out, "recomp"), program_id, modes)
+        return 0
     print(f"extracting {args.dump}")
     extract_ncch.extract(args.dump, dump_dir)
     with open(os.path.join(dump_dir, "exheader.bin"), "rb") as f:
@@ -389,37 +457,77 @@ def main(argv=None) -> int:
     header = exh.parse(exheader_bytes)
     with open(os.path.join(dump_dir, "code.bin"), "rb") as f:
         code = codebin2elf.load_code(header, f.read())
-    version = check_version(header, code, args.versions)
+    versions = game_version.load_versions(args.versions)
+    program_id = struct.unpack_from("<Q", exheader_bytes, 0x200)[0]
+    if args.game_version:   # (the player says which version it is: its tables are used whatever the hash)
+        try:
+            version = game_version.find(args.game_version, versions)
+        except game_version.VersionError as e:
+            raise SystemExit(str(e)) from None
+    else:
+        version = check_version(header, code, args.versions)
     if version:
-        print(f"version: {version['name']}")
-        if not buildable(version) and not args.any_version:
-            raise SystemExit(f"{version['name']} isn't one the port runs: use the USA v1.3.0 or the "
+        print(f"version: {version['name']} ({version.get('key', '?')})")
+        if (not buildable(version) or version.get("mod_base_only")) and not args.any_version:
+            raise SystemExit(f"{version['name']} isn't one the port runs as it is: use the USA v1.3.0 or the "
                              "EUR v1.1.0 update .cia")
     elif not args.any_version:
-        raise SystemExit("this code.bin isn't a version the project knows (config/versions.json); "
-                         "use the USA v1.3.0 or the EUR v1.1.0 update .cia")
-    program_id = struct.unpack_from("<Q", exheader_bytes, 0x200)[0]
+        raise SystemExit(game_version.unknown_code_message(program_id, versions))
 
-    mods_dir = None if args.no_mods else (args.mods or args.install)
     used, changes_code = [], False
     unmodded_code = code
-    if mods_dir:
-        modded, used = code_mods.apply_mods(code, mods_dir, program_id, header.bss_size)
+    mod_code = None          # a code mod's exheader.bin and the version its code is made from
+    folders = mod_folders(args, program_id)
+    if folders:
+        for kind, a, b in code_mods.code_conflicts([code_mods.describe_mod(os.path.dirname(f), os.path.basename(f))
+                                                     for f in folders]):
+            print(f"warning: the code mods don't go together: {code_mods.describe_conflict(kind, a, b)}")
+        override = code_mods.exheader_override(folders)
+        bss_size = exh.parse(override[1]).bss_size if override else header.bss_size
+        try:
+            modded, used = code_mods.apply_folders(code, folders, bss_size)
+        except code_mods.ModError as e:
+            raise SystemExit(f"a code mod can't be applied: {e}") from None
+        if override:
+            try:
+                mod_code = game_version.check_mod_exheader(header, exh.parse(override[1]), len(modded), versions,
+                                                           override[0])
+            except game_version.VersionError as e:
+                raise SystemExit(str(e)) from None
+            used.append(override[0])
         if used:
-            segments = [("code", 0, header.text.size),
-                        ("read-only data", header.ro.address - header.text.address, header.ro.size),
-                        ("data", header.data.address - header.text.address, header.data.size)]
             print("code mods: " + ", ".join(used))
-            for line in code_mods.describe(code, modded, segments):
-                print(f"  {line}")
-            cave = code_mods.changed_bytes(code, modded, header.text.size, header.text.padded_size - header.text.size)
-            if cave:
-                print(f"  after the code, in its last page: {cave} bytes changed (new code)")
+            if mod_code is not None and mod_code.version is not version:
+                print(f"  the mod's code is made from {mod_code.version['name']} ({mod_code.version.get('key')}), "
+                      "not from this dump's version: the library is made with that version's addresses")
+            else:
+                segments = [("code", 0, header.text.size),
+                            ("read-only data", header.ro.address - header.text.address, header.ro.size),
+                            ("data", header.data.address - header.text.address, header.data.size)]
+                for line in code_mods.describe(code, modded, segments):
+                    print(f"  {line}")
+                cave = code_mods.changed_bytes(code, modded, header.text.size,
+                                               header.text.padded_size - header.text.size)
+                if cave:
+                    print(f"  after the code, in its last page: {cave} bytes changed (new code)")
             changes_code = code_mods.changed_bytes(code, modded, 0, header.text.padded_size) > 0
             if changes_code:
                 print("  the mod changes the game's code: this library runs only with the same mod in "
                       "Azahar's mods folder (build again after adding, changing or removing it)")
             code = modded
+        if mod_code is not None:
+            header = mod_code.header
+            if mod_code.version is not version:
+                unmodded_code = None   # (another version's code: no bytes of it to compare the mod's with)
+                version = mod_code.version
+                if not buildable(version):
+                    raise SystemExit(f"the code mod's code is made from {version['name']}, which the port has no "
+                                     "addresses for: build the mod on the USA v1.3.0 update, or on a version the port "
+                                     "runs (python3 tools/game_version.py list)")
+            if mod_code.extension:
+                start, end = mod_code.extension
+                print(f"  the mod's code past the game's data: 0x{start:08X}-0x{end:08X} (0x{end - start:X} bytes), "
+                      "recompiled where the code reaches it")
 
     out = os.path.join(args.out, "recomp")
     print("recompiling (a couple of minutes)")
@@ -445,16 +553,46 @@ def main(argv=None) -> int:
         if extra_code:
             print(f"  the code mod changes {len(extra_code)} stretches of the read-only data that may hold code: "
                   "recompiled too where the code reaches them")
+    if mod_code is not None and mod_code.extension:
+        extra_code.append(mod_code.extension)
     img = Image(code, header.text.address, size, extra_code)
     entries, hooks, tunables = translate_tables(
         version or {}, recompile.load_entries(args.functions, [args.extra] if args.extra else []),
         recompile.load_hooks(args.hooks), recompile.load_tunables(args.tunables))
+    if changes_code:
+        # (what of the code the port hooks, tunes or calls the mod changed: those features may not work with it)
+        reference = unmodded_code if unmodded_code is not None else game_version.reference_code(
+            version or {}, [args.dump] + list(args.romfs), args.out)
+        if reference is None:
+            print("  (give the base game's dump with --romfs to check which of the port's hooks the mod changes)")
+        else:
+            try:
+                sizes = {int(r["address"], 16): int(r["size"], 16) for r in build_function_table.read_tsv(args.functions)}
+                ranges = game_version.port_code_ranges(version or {"target": True}, sizes, hooks, tunables,
+                                                       game_version.load_port_addresses(args.port_addresses))
+            except (OSError, KeyError, ValueError):
+                ranges = []
+            for what in game_version.touched(reference, code, header.text.address, ranges):
+                print(f"  warning: the code mod changes code the port uses ({what}): that part of the port may not "
+                      "work with it")
     segs = [(header.ro.address, header.ro.size), (header.data.address, header.data.size)]
     res = recompile.recompile(img, entries, out, data_segments=segs, title_id=program_id,
                               hooks=hooks, tunables=tunables, log=lambda m: print(m, flush=True))
     print(f"{res['report']['functions']} functions, {res['report']['hook_points']} hook points")
     for p in res["problems"]:
         print(f"  warning: {p}")
+    # what the runtime is told about the game version (beside the recompiled code, which recompile() keeps clean)
+    try:
+        table = game_version.port_table(version or {"target": True},
+                                        game_version.load_port_addresses(args.port_addresses))
+    except game_version.VersionError as e:
+        raise SystemExit(str(e)) from None
+    ext = game_version.extension_crc(code, header.text.address, mod_code.extension if mod_code else None)
+    with open(os.path.join(out, "src", game_version.SOURCE_NAME), "w", encoding="ascii", newline=chr(10)) as f:
+        f.write(game_version.version_source((version or {}).get("key", "unknown"),
+                                            code_library_id(args.native, args.deterministic), table, ext))
+    if table:
+        print(f"game version {version.get('key')}: {len(table)} of the port's addresses moved to it")
 
     # the game's geometry shaders as C beside the recompiled code (a stale file from an earlier build goes)
     shader_c = os.path.join(out, "src", "pica_native.c")
@@ -477,23 +615,7 @@ def main(argv=None) -> int:
             os.remove(shader_c)
         print("geometry shaders: interpreted (give --romfs with the base game's dump or romfs.bin to compile them in)")
 
-    toolchain_dir = os.path.join(args.out, "toolchain")
-    if args.fetch_compiler and not args.cc and sys.platform.startswith("win"):
-        cc = fetch_compiler(toolchain_dir, args.compiler_zip)
-    elif args.android:
-        cc = find_android_compiler(args.cc, toolchain_dir, args.fetch_compiler)
-    else:
-        cc = find_compiler(args.cc, toolchain_dir, args.fetch_compiler)
-    name = (android_library_name if args.android else library_name)(program_id, args.native, args.deterministic)
-    print(f"compiling with {cc} -{args.opt}{' for Android' if args.android else ''} ({args.jobs} jobs; "
-          "-O1 takes a while)")
-    lib = rbuild.build(out, args.jobs, args.opt, modes or ["RC_PAGED"], os.path.join("android", name) if args.android
-                       else name, [rbuild.DLL_GLUE], cc=cc, extra_flags=["-fvisibility=hidden"], android=args.android)
-    print(f"code library: {lib}")
-    if args.android and args.native:  # (the native app checks it: GameFolderActivity)
-        with open(id_path(lib), "w", encoding="ascii") as f:
-            f.write(code_library_id(True, args.deterministic) + "\n")
-        print(f"its id, for the app: {id_path(lib)}")
+    lib, name = compile_library(args, out, program_id, modes)
     if args.android and not args.install:
         print(f"next: copy it to your device, into the native app's folder as {name}" if args.native else
               f"next: copy it to your device, into Azahar's user folder as recomp/{name}")

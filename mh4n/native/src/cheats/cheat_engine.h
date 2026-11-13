@@ -72,6 +72,11 @@ public:
 
     // The game's code [begin, end): what TouchesCode compares with (CheatInfo::touches_code).
     void SetCodeRange(u32 begin, u32 end);
+    // The writes of cheat `index` into the game's code as an IPS patch of the code (offsets from its start, as a code
+    // mod's exefs/code.ips): the way such a cheat takes effect in the port, built into the code library. False and
+    // *why (GatewayCheat::CodeWrites' reasons, "no_code_range" before the game has started, "ips_eof" for the one
+    // offset an IPS patch can't hold) when it can't be made.
+    bool CodePatch(std::size_t index, std::vector<u8>* ips, std::string* why) const;
 
     // Each cheat that is on, once, in order (the game's thread).
     void Run(CheatTarget& target) const;

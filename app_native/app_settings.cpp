@@ -213,7 +213,10 @@ int render_scale_times(int percent) {
     return std::clamp(static_cast<int>(want), 1, 10);  // (10: the renderer's kMaxScale)
 }
 
-int render_scale_used(int percent, bool adreno_fix) { return adreno_fix_scale(render_scale_times(percent), adreno_fix); }
+int render_scale_used(int percent, bool adreno_fix) {
+    const int used = adreno_fix_scale(render_scale_times(percent), adreno_fix), limit = gpu_scale_limit();
+    return limit > 0 ? std::min(used, limit) : used;  // (what this GPU can draw at: first_run.h gpu_scale_limit)
+}
 
 bool app_adreno_fix() { return !same(app_setting("Graphics", "AdrenoFix", "auto"), "off"); }
 
